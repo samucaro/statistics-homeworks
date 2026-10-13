@@ -1,0 +1,29 @@
+/* HW2-specific styles (HW1 is frozen: shared CSS is not modified) */
+:root { --c-gen:#7a4cc2; --c-der:#1f7a8c; --c-pk:#b4441f; --c-hash:#1f5fa8; --c-chk:#2e7d4f; --c-enc:#a8761f; }
+@media (prefers-color-scheme: dark) { :root { --c-gen:#b393ee; --c-der:#5fc4d6; --c-pk:#f08a5d; --c-hash:#6aa8f0; --c-chk:#6cc995; --c-enc:#e0b45c; } }
+.tag.gen{color:var(--c-gen)} .tag.der{color:var(--c-der)} .tag.pk{color:var(--c-pk)}
+.tag.hash{color:var(--c-hash)} .tag.chk{color:var(--c-chk)} .tag.enc{color:var(--c-enc)}
+.step { border-left: 3px solid var(--border); padding: 4px 0 4px 14px; margin: 14px 0; }
+.step-h { font-weight: 600; margin-bottom: 4px; }
+.std { font-family: var(--mono); font-size: .78rem; color: var(--muted); margin-left: 6px; }
+.hex { word-break: break-all; font-size: .8rem; }
+.eip-row { font-family: var(--mono); font-size: 1.05rem; display: flex; flex-wrap: wrap; gap: 2px; align-items: flex-start; }
+.eip { display: inline-flex; flex-direction: column; align-items: center; min-width: 1.15em; padding: 1px 1px; border-radius: 3px; }
+.eip small { font-size: .6rem; color: var(--muted); }
+.eip.up { background: color-mix(in srgb, var(--c-chk) 22%, transparent); }
+.eip.low { background: color-mix(in srgb, var(--c-enc) 14%, transparent); }
+.eip.dig { opacity: .55; }
+textarea { font: .92rem/1.4 var(--mono); width: 100%; min-height: 64px; padding: 8px 10px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
+.flow { display: flex; flex-direction: column; align-items: center; gap: 0; margin: 10px auto; max-width: 560px; }
+.flow .node { width: 100%; border: 2px solid var(--border); border-radius: 10px; padding: 8px 12px; background: var(--surface); text-align: center; }
+.flow .node b { font-family: var(--serif); font-size: 1.05rem; }
+.flow .node .caption { margin: 0; }
+.flow .edge { display: flex; align-items: center; gap: 10px; padding: 4px 0; font-size: .82rem; }
+.flow .edge::before { content: "↓"; font-size: 1.3rem; color: var(--muted); }
+.flow .edge .std { margin: 0; }
+.flow .secret { border-color: var(--c-pk); }
+.flow .public { border-color: var(--c-hash); }
+.timeline svg text { font-size: 11px; }
+/* long checksummed address must wrap on phones */
+.pubkey { max-width: 100%; word-break: break-all; }
+.flow .node .caption { word-break: break-all; }
