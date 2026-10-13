@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HW1 · Elliptic-Curve Toy Keys</title>
+<meta name="description" content="Toy elliptic-curve scalar multiplication (private key → public key), its statistical properties, and cryptography & statistics in Bitcoin and Ethereum.">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="wrap">
+
+<header class="site">
+  <div class="crumb"><a href="../">Statistics · Homeworks</a> / HW1</div>
+  <h1>Homework 1 — Private key → public key on a toy elliptic curve</h1>
+  <p class="lead">Statistics · MSc in Cybersecurity, Sapienza University of Rome · A.A. 2026/27</p>
+  <nav class="toc">
+    <a href="#setup">1. Setup</a><a href="#naive">2. G, 2G, …, kG</a><a href="#fast">3. Double-and-add</a>
+    <a href="#viz">4. Visualisation</a><a href="#stats">5. Statistical exploration</a>
+    <a href="#discussion">6. Discussion</a><a href="#research">7. Research</a><a href="#refs">References</a>
+  </nav>
+  <p style="font-size:.85rem">
+    Legend: <span class="tag req">required</span> asked by the assignment ·
+    <span class="tag opt">optional</span> "Guru level" ·
+    <span class="tag ours">extension</span> my addition, to make the statistics meaningful
+  </p>
+</header>
+
+<p>
+In Ethereum (and Bitcoin) a private key is an integer <code>k</code> and the public key is the point
+<code>Q = k·G</code> on the elliptic curve <b>secp256k1</b>, where <code>G</code> is a fixed base point.
+Computing <code>Q</code> from <code>k</code> is fast; recovering <code>k</code> from <code>Q</code> is the
+<b>Elliptic Curve Discrete Logarithm Problem (ECDLP)</b>, believed to be infeasible for a 256-bit curve.
+This page reproduces the idea on a toy curve small enough to compute by hand, then asks which statistical
+properties of the outputs are meaningful for cryptography.
+</p>
+<div class="note warn">Educational code: arithmetic is not constant-time and the toy curves offer no security
+at all (the private key can be found by trying every value). Never use it with real keys.</div>
+
+<!-- ======================================================================= -->
+<h2 id="setup">1. Setup: curve, base point, private key <span class="tag req">required</span></h2>
+<p>
+Toy curve <code>E: y² = x³ + 7 (mod 17)</code> — same equation as secp256k1 (<code>a = 0, b = 7</code>) but over the
+field F<sub>17</sub> instead of F<sub>p</sub> with p ≈ 2<sup>256</sup>. It has <span id="curve-count"></span>,
+where <b>O</b> is the "point at infinity", the neutral element of the group (it plays the role of 0).
+</p>
+<div class="card">
+  <div class="controls">
+    <label>Base point G (all valid points listed)
+      <select id="g-select"></select></label>
+    <label>Private key k
+      <input id="k-input" type="number" min="1" value="6"></label>
+    <button id="compute" class="primary">Compute Q = k·G</button>
+  </div>
+  <div id="k-error" class="bad" style="margin-top:6px"></div>
+  <p id="g-info" style="margin:10px 0 0"></p>
+</div>
+
+<h3>Point addition — the only operation we need</h3>
+<p>Points are added with the chord-and-tangent rule; over F<sub>p</sub> every division is a multiplication by a
+<b>modular inverse</b> (computed with the extended Euclidean algorithm). For P = (x₁, y₁), Q = (x₂, y₂):</p>
+<pre>
+P + O = P                          (O is the neutral element)
+P + (−P) = O,   where −(x, y) = (x, −y mod p)
+λ = (y₂ − y₁) · (x₂ − x₁)⁻¹  mod p     if P ≠ Q   (chord)
+λ = (3x₁² + a) · (2y₁)⁻¹    mod p     if P = Q   (tangent, "doubling")
+x₃ = λ² − x₁ − x₂  mod p
+y₃ = λ(x₁ − x₃) − y₁  mod p          →   P + Q = (x₃, y₃)
+</pre>
+<p>Source: <a href="js/ec.js"><code>js/ec.js</code></a> (BigInt arithmetic, so the same code also runs on the real secp256k1 in §5.3).</p>
+
+<!-- ======================================================================= -->
+<h2 id="naive">2. Compute and print G, 2G, 3G, …, kG <span class="tag req">required</span></h2>
+<p>The direct method: start from G and add G repeatedly. It needs <code>k − 1</code> additions, i.e. O(k) work.</p>
+<div class="table-wrap"><table>
+  <thead><tr><th>multiple</th><th>point</th><th>case</th><th>λ</th></tr></thead>
+  <tbody id="naive-body"></tbody>
+</table></div>
+<p id="naive-note" class="caption"></p>
+
+<!-- ======================================================================= -->
+<h2 id="fast">3. A faster method: double-and-add <span class="tag req">required</span></h2>
+<p>
+Write k in binary and scan it from the most significant bit: for each bit, <b>double</b> the accumulator R;
+if the bit is 1, also <b>add</b> G. This is the same idea as fast modular exponentiation (square-and-multiply),
+written additively. The cost is at most 2·log₂(k) operations — about 512 for a 256-bit key instead of ≈ 2<sup>256</sup>.
+That gap between O(log k) forward and the best known ≈ √n backwards (Pollard's rho) is what makes
+<code>k ↦ kG</code> a <b>one-way function</b>.
+</p>
+<p id="da-bits"></p>
+<div class="table-wrap"><table>
+  <thead><tr><th>step</th><th>bit</th><th>operation</th><th>R represents</th><th>R</th></tr></thead>
+  <tbody id="da-body"></tbody>
+</table></div>
+<div class="pubkey" id="pubkey"></div>
+<div id="check" class="caption"></div>
+
+<!-- ======================================================================= -->
+<h2 id="viz">4. Slowed-down visual representation <span class="tag opt">optional · guru</span></h2>
+<p>
+Each grey dot is a point of the curve over F<sub>17</sub>. The dashed line is y = 8.5: P and −P are mirror
+images across it. At each step the <span style="color:var(--accent-2)">blue</span> point (accumulator R) and the
+<span style="color:var(--accent)">orange</span> point (G, or R itself when doubling) produce the
+<span style="color:var(--accent-3)">green</span> result. Uses the G and k chosen in §1.
+</p>
+<div class="card">
+  <div class="controls">
+    <label>Method
+      <select id="anim-method">
+        <option value="naive">Repeated addition (G, 2G, …, kG)</option>
+        <option value="da">Double-and-add</option>
+      </select></label>
+    <label>Speed <input id="anim-speed" type="range" min="200" max="2400" value="1400"></label>
+    <button id="anim-play" class="primary">▶ Play</button>
+    <button id="anim-step">Step</button>
+    <button id="anim-reset">⟲ Reset</button>
+  </div>
+  <p id="anim-bits" style="margin:10px 0 0"></p>
+  <div class="grid2" style="align-items:start">
+    <div id="anim-svg"></div>
+    <div id="anim-panel"></div>
+  </div>
+</div>
+<p class="caption">Over a finite field the chord/tangent "line" wraps around modulo p, so it is not drawn:
+the arrows only show which points combine into which, and the panel shows the algebra.
+Note how consecutive multiples jump around the grid with no visible pattern.</p>
+
+<!-- ======================================================================= -->
+<h2 id="stats">5. Statistical exploration <span class="tag req">required</span></h2>
+
+<h3>5.0 What each test measures</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Property</th><th>Statistic</th><th>Ideal for a "random-looking" output</th></tr></thead>
+<tbody>
+<tr><td>Distribution of x, y</td><td class="wrap-ok">histogram + Pearson χ² goodness-of-fit:
+  χ² = Σ (Oᵢ − Eᵢ)² / Eᵢ, df = K − 1</td><td class="wrap-ok">large p-value (no evidence against uniformity)</td></tr>
+<tr><td>Frequency of individual values</td><td class="wrap-ok">counts per value, Shannon entropy H = −Σ pᵢ log₂ pᵢ</td><td class="wrap-ok">H close to log₂(#possible values)</td></tr>
+<tr><td>Distribution of bits</td><td class="wrap-ok">fraction of 1s per bit position; standard error √(0.25/N)</td><td class="wrap-ok">every fraction ≈ 0.5 (within ±2 SE in ≈ 95% of positions)</td></tr>
+<tr><td>Input/output correlation</td><td class="wrap-ok">Pearson r (linear), Spearman ρ (monotonic); under H₀ |r| ≲ 2/√N</td><td class="wrap-ok">r ≈ 0</td></tr>
+<tr><td>Avalanche</td><td class="wrap-ok">flip 1 input bit → Hamming distance (HD) between outputs</td><td class="wrap-ok">≈ half of the output bits change: HD ~ Binomial(m, ½)</td></tr>
+</tbody></table></div>
+<p>Source: <a href="js/stats.js"><code>js/stats.js</code></a> — written without libraries (χ² p-value via the regularised incomplete gamma function).</p>
+
+<h3>5.1 The assignment's curve (p = 17)</h3>
+<p>Orders of the 17 affine points. By Lagrange's theorem the order of every point divides the group order 18:</p>
+<div class="table-wrap"><table id="orders-table"></table></div>
+<div class="grid2">
+  <div><div class="chart-title">Frequency of x in kG, k = 1 … n−1</div><div id="toy-x-chart"></div></div>
+  <div><div class="chart-title">Frequency of y in kG, k = 1 … n−1</div><div id="toy-y-chart"></div></div>
+</div>
+<p id="toy-x-summary"></p>
+<p>Observations (they hold for any G chosen in §1):</p>
+<ul>
+  <li><b>Periodicity.</b> k·G depends only on k mod n (n = order of G). With G = (1, 5), n = 9: there are only 9 possible public keys, so the "private key" can be found by trying all of them.</li>
+  <li><b>Symmetry.</b> (n − k)·G = −(k·G): the x-coordinate is repeated in pairs and the y values come as y / 17 − y.</li>
+  <li><b>No meaningful statistics.</b> With 8 points, histograms, χ² tests or bit counts cannot distinguish "uniform" from "structured". This motivates §5.2.</li>
+</ul>
+
+<h3>5.2 A larger toy curve <span class="tag ours">extension</span></h3>
+<p id="big-params"></p>
+<p>We use every multiple k·G, k = 1 … n−1, i.e. all points of the group except O.</p>
+
+<h4>(a) Distribution of x and y — 16 equal bins over [0, p) and χ² test (dashed line = expected count)</h4>
+<div class="grid2">
+  <div><div class="chart-title">x coordinate</div><div id="big-x-hist"></div></div>
+  <div><div class="chart-title">y coordinate</div><div id="big-y-hist"></div></div>
+</div>
+<div class="stat-row" id="big-chi"></div>
+
+<h4>(b) Frequency of individual values</h4>
+<p id="big-freq"></p>
+
+<h4>(c) Distribution of bits of x (shaded band = ±2 standard errors around 0.5)</h4>
+<div id="big-bits"></div>
+<p class="caption">The top bit (bit 11) is almost always 0 simply because x &lt; p = 2089 &lt; 2<sup>12</sup>: only x ≥ 2048 set it.
+That is a property of the <i>range</i>, not a weakness of the map. For secp256k1, p = 2<sup>256</sup> − 2<sup>32</sup> − 977 is so close to 2<sup>256</sup> that the effect is negligible.
+The standard error uses N/2 because each x appears twice (±y).</p>
+
+<h4>(d) Correlation between input k and output x(kG)</h4>
+<div class="grid2">
+  <div id="big-scatter"></div>
+  <div><div class="stat-row" id="big-corr"></div></div>
+</div>
+<p class="caption">Over the full range the correlation is exactly 0 — "too perfect": it is forced by the symmetry
+x(kG) = x((n−k)G), which makes x a symmetric function of k around n/2. On the half range (each x once) the values
+fall inside the band expected for unrelated data. Zero <i>linear</i> or <i>monotonic</i> correlation does not mean
+independence: the relation is exact and algebraic, just not visible to these statistics.</p>
+
+<h4>(e) Avalanche-like behaviour: flip one bit of k</h4>
+<div class="grid2">
+  <div><div class="chart-title">HD between x(kG) and x(k′G), k′ = k ⊕ 2ʲ</div><div id="big-aval"></div></div>
+  <div><div class="chart-title">Baseline: HD between x of two random points</div><div id="big-aval-base"></div></div>
+</div>
+<div class="stat-row" id="big-aval-stats"></div>
+<p class="caption">If the two distributions match, a one-bit change of the key produces a public key that is, bit-wise,
+as different as an unrelated one. Note: k′G = kG ± 2ʲG, so the two outputs are still exactly related by the group law.</p>
+
+<h3>5.3 The real secp256k1 vs a hash function (SHA-256) <span class="tag ours">extension</span></h3>
+<p>
+Random 256-bit private keys k (from <code>crypto.getRandomValues</code>), one random bit flipped → k′.
+We compare the Hamming distance between x(kG) and x(k′G) with the HD between SHA-256(k) and SHA-256(k′),
+and check the bit balance of x(kG). Runs in your browser (≈ 20 ms per scalar multiplication).
+</p>
+<div class="card">
+  <div class="controls">
+    <label>Number of keys N
+      <select id="secp-n"><option>50</option><option selected>200</option><option>500</option></select></label>
+    <button id="secp-run" class="primary">Run experiment</button>
+  </div>
+  <div class="progress"><div id="secp-progress"></div></div>
+  <div class="stat-row" id="secp-stats"></div>
+  <div class="grid2">
+    <div><div class="chart-title">secp256k1: bits of x changed</div><div id="secp-hd-ec"></div></div>
+    <div><div class="chart-title">SHA-256: bits of digest changed</div><div id="secp-hd-h"></div></div>
+  </div>
+  <div class="chart-title">Fraction of 1s per bit position of x(Q)</div>
+  <div id="secp-bits"></div>
+</div>
+<p class="caption">Expected: both HD distributions centred near 128 with standard deviation ≈ 8 (Binomial(256, ½)).
+With small N the sample mean fluctuates by about 8/√N bits.</p>
+
+<!-- ======================================================================= -->
+<h2 id="discussion">6. Discussion: one-way function vs hash function <span class="tag req">required</span></h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Property</th><th>Needed for k ↦ kG (one-way, ECDLP)?</th><th>Needed for a cryptographic hash?</th><th>What we observed</th></tr></thead>
+<tbody>
+<tr><td>Determinism</td><td>Yes</td><td>Yes</td><td class="wrap-ok">Same k → same Q, always.</td></tr>
+<tr><td>Fast forward computation</td><td>Yes — O(log k) with double-and-add</td><td>Yes</td><td class="wrap-ok">≈ 20 ms in JavaScript for 256 bits.</td></tr>
+<tr><td>Hard to invert (preimage resistance)</td><td><b>Yes — the core property</b> (ECDLP)</td><td>Yes</td><td class="wrap-ok">Not measurable by statistics. The toy curves look "random" yet are inverted by brute force in microseconds.</td></tr>
+<tr><td>Large group / output space</td><td>Yes — n ≈ 2<sup>256</sup>, prime order</td><td>Yes (output ≥ 256 bits)</td><td class="wrap-ok">p = 17: only 9 keys with G = (1, 5).</td></tr>
+<tr><td>Algebraic structure (a+b)G = aG + bG</td><td><b>Yes — required</b> (ECDH, signatures, HD wallets)</td><td><b>No — must be absent</b> (random-oracle behaviour)</td><td class="wrap-ok">Explains the symmetry, periodicity and k′G = kG ± 2ʲG.</td></tr>
+<tr><td>Uniform-looking outputs, balanced bits</td><td>Not a design goal; the points are (close to) uniform over the curve because k ↦ kG is a bijection onto the group</td><td>Yes (pseudo-randomness)</td><td class="wrap-ok">χ² and bit tests pass on the larger curve and on secp256k1 (except range effects).</td></tr>
+<tr><td>Avalanche effect / strict avalanche criterion</td><td>Not required (it is a by-product)</td><td><b>Yes — explicit design criterion</b></td><td class="wrap-ok">Observed empirically for x(kG), comparable to SHA-256.</td></tr>
+<tr><td>No input/output correlation</td><td>Implied by hardness (a usable correlation would leak k)</td><td>Yes</td><td class="wrap-ok">No linear/monotonic correlation, but an exact algebraic relation exists.</td></tr>
+<tr><td>Collision resistance</td><td>Automatic for k &lt; n: the map is injective (a bijection)</td><td>Yes — hard, because hashes compress</td><td class="wrap-ok">Every k in [1, n−1] gave a distinct point.</td></tr>
+<tr><td>Arbitrary-length input, fixed-length output</td><td>No — input is an integer mod n</td><td>Yes (compression)</td><td class="wrap-ok">—</td></tr>
+</tbody></table></div>
+
+<h3>Conclusions</h3>
+<ol>
+<li><b>Statistics can falsify, not certify.</b> A strong bias would reveal a weakness, but passing every test proves nothing:
+the p = 2089 curve passes χ², bit balance, correlation and avalanche tests, yet its private keys are recovered by trying 2143 values.
+Security comes from the size of the group and the hardness of ECDLP, not from good-looking histograms.</li>
+<li><b>kG is not a hash, and should not be.</b> Its value comes precisely from the group structure that a hash must destroy:
+with it, Alice and Bob agree on a shared secret (a·bG = b·aG), and signatures can be verified using only Q.
+A random oracle could not do that.</li>
+<li><b>Avalanche and uniformity are by-products here, not requirements.</b> They emerge because scalar multiplication mixes the
+coordinates very thoroughly, but nobody designs secp256k1 for them; for SHA-256 / Keccak they are explicit design criteria.</li>
+<li><b>Careful with naive statistics.</b> Exact zero correlation (forced by symmetry) and duplicated samples (±y) can make tests look
+better — or more significant — than they are. Effective sample size matters.</li>
+<li><b>Parameters matter beyond size.</b> Example: y² = x³ + 7 mod 547 also has a prime number of points, but exactly p of them;
+such "anomalous" curves are broken in polynomial time by Smart's attack. Real curves are chosen to avoid known weak classes.</li>
+</ol>
+
+<!-- ======================================================================= -->
+<h2 id="research">7. Research: cryptography and statistics in Bitcoin and Ethereum <span class="tag req">required</span></h2>
+
+<h3>7.1 From private key to address</h3>
+<div class="table-wrap"><table>
+<thead><tr><th></th><th>Bitcoin</th><th>Ethereum</th></tr></thead>
+<tbody>
+<tr><td>Curve</td><td>secp256k1</td><td>secp256k1 (accounts); BLS12-381 (validators, since PoS)</td></tr>
+<tr><td>Public key</td><td>Q = kG; compressed 33 bytes; Taproot uses 32-byte x-only keys</td><td>Q = kG, 64 bytes (x ‖ y)</td></tr>
+<tr><td>Address</td><td class="wrap-ok">legacy: RIPEMD-160(SHA-256(Q)) + Base58Check; SegWit/Taproot: Bech32(m)</td><td class="wrap-ok">last 20 bytes of Keccak-256(x ‖ y)</td></tr>
+<tr><td>Signatures</td><td>ECDSA; Schnorr (BIP 340) since Taproot (2021)</td><td>ECDSA (recoverable, v r s) for transactions; BLS aggregate signatures for consensus</td></tr>
+<tr><td>Hash functions</td><td>SHA-256 (double, for PoW and txids), RIPEMD-160</td><td>Keccak-256 (the original Keccak padding, <i>not</i> the final NIST SHA3-256)</td></tr>
+</tbody></table></div>
+<p>
+This is exactly where §6 becomes concrete: the <b>one-way function</b> (kG) protects the key, the <b>hash</b> turns the public
+key into a short identifier and adds a second layer: until an address spends, only its hash is public.
+</p>
+
+<h3>7.2 Statistics inside the protocols</h3>
+<ul>
+<li><b>Proof-of-Work as a probabilistic process (Bitcoin).</b> Each hash attempt is a Bernoulli trial with success probability
+target / 2<sup>256</sup>, so the number of attempts is geometric and block arrivals are well modelled as a Poisson process,
+with exponential inter-block times (mean 10 minutes). Every 2016 blocks the difficulty is retargeted: the network estimates the
+hash rate from the observed time and rescales the target — a statistical estimator steering the system.</li>
+<li><b>Double-spend probability.</b> The Bitcoin whitepaper (§11) models an attacker catching up as a gambler's-ruin random walk,
+with the attacker's progress during the wait modelled by a Poisson distribution; this is the origin of the "wait for 6 confirmations" rule of thumb.</li>
+<li><b>Randomness in Proof-of-Stake (Ethereum).</b> Block proposers are drawn pseudo-randomly, with probability proportional to
+effective balance, from the RANDAO beacon (a mix of BLS signatures revealed by proposers). The last proposer can withhold its reveal and bias
+the result by about one bit — a known, accepted limitation, analysed in probabilistic terms.</li>
+<li><b>Data availability sampling (Ethereum).</b> Since EIP-4844 (2024), rollups post "blobs" committed with KZG polynomial commitments.
+With the Fusaka upgrade (December 2025), PeerDAS (EIP-7594) lets nodes download only random samples of erasure-coded blob data.
+Because the data is extended with redundancy, missing data would make many samples fail, so the probability of accepting unavailable data
+decreases exponentially with the number of samples: a direct application of sampling theory to security.</li>
+<li><b>Passkeys on-chain.</b> Fusaka also added a precompile for the NIST curve secp256r1 (EIP-7951), used by Secure Enclave, Android Keystore and FIDO2/WebAuthn,
+so wallets can be controlled by hardware-backed keys.</li>
+</ul>
+
+<h3>7.3 Statistics as an attack and as a defence</h3>
+<ul>
+<li><b>Bad randomness in ECDSA nonces.</b> An ECDSA signature uses a fresh secret nonce. Reusing it twice reveals the private key with simple algebra
+(the 2010 PlayStation 3 break; Android wallets in 2013 because of a flawed random generator). Even a slight <i>statistical bias</i> is enough:
+Breitner and Heninger (2019) applied lattice attacks to biased nonces and recovered hundreds of Bitcoin keys and dozens of Ethereum keys. Modern wallets
+use deterministic nonces (RFC 6979). This is where "statistical properties desirable for cryptography" matter most:
+<b>the randomness of secrets</b>, more than the look of public outputs.</li>
+<li><b>Key generation.</b> A private key is only as strong as the entropy behind it; "brain wallets" (keys derived from human passphrases)
+have been emptied by attackers enumerating likely phrases.</li>
+<li><b>Chain analytics.</b> Blockchains are pseudonymous, not anonymous: heuristics such as common-input ownership, change detection and
+timing analysis cluster addresses statistically — used by investigators and compliance teams, and a privacy risk for users.</li>
+<li><b>Looking ahead.</b> Shor's algorithm would solve ECDLP in polynomial time on a large fault-tolerant quantum computer.
+Hashed addresses protect keys only until they are first used, which is why post-quantum migration is an open research topic for both chains.</li>
+</ul>
+
+<!-- ======================================================================= -->
+<h2 id="refs">References</h2>
+<ul style="font-size:.9rem">
+<li>SEC 2: Recommended Elliptic Curve Domain Parameters, v2.0 (Certicom, 2010) — secp256k1 parameters.</li>
+<li>D. Hankerson, A. Menezes, S. Vanstone, <i>Guide to Elliptic Curve Cryptography</i>, Springer, 2004.</li>
+<li>S. Nakamoto, <i>Bitcoin: A Peer-to-Peer Electronic Cash System</i>, 2008 (§11 Calculations).</li>
+<li>G. Wood, <i>Ethereum: A Secure Decentralised Generalised Transaction Ledger</i> (Yellow Paper).</li>
+<li>BIP 340 — Schnorr Signatures for secp256k1.</li>
+<li>Ethereum Foundation, <a href="https://blog.ethereum.org/2025/11/06/fusaka-mainnet-announcement">Fusaka mainnet announcement</a> (2025) — EIP-7594 PeerDAS, EIP-7951.</li>
+<li>J. Breitner, N. Heninger, <a href="https://eprint.iacr.org/2019/023">Biased Nonce Sense: Lattice Attacks against Weak ECDSA Signatures in Cryptocurrencies</a>, FC 2019.</li>
+<li>N. Smart, <i>The Discrete Logarithm Problem on Elliptic Curves of Trace One</i>, J. Cryptology, 1999.</li>
+<li>T. Pornin, RFC 6979 — Deterministic Usage of DSA and ECDSA, 2013.</li>
+</ul>
+
+<footer>
+  All computations run client-side in plain JavaScript (no libraries): <a href="js/ec.js">ec.js</a> · <a href="js/stats.js">stats.js</a> ·
+  <a href="js/viz.js">viz.js</a> · <a href="js/charts.js">charts.js</a> · <a href="js/app.js">app.js</a>.<br>
+  Developed with the support of an AI assistant (Claude) used as a tutor; design choices, results and interpretations were reviewed and discussed by the author.
+</footer>
+</div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
