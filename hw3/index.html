@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HW3 · Toy ECC vs Caesar</title>
+<meta name="description" content="Toy EC-ElGamal encryption on secp256k1 with a restricted private key, the Caesar cipher, statistical cryptanalysis of Caesar, and a key-space attack on the toy scheme.">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="css/hw3.css">
+</head>
+<body>
+<div class="wrap">
+
+<header class="site">
+  <div class="crumb"><a href="../">Statistics · Homeworks</a> / HW3</div>
+  <h1>Homework 3 — Toy elliptic-curve encryption vs the Caesar cipher</h1>
+  <p class="lead">Encryption, key spaces, statistical cryptanalysis and key-space attacks</p>
+  <nav class="toc">
+    <a href="#ecc">1. Toy ECC scheme</a><a href="#caesar">2. Caesar cipher</a><a href="#compare">3. Comparison</a>
+    <a href="#cryptanalysis">4. Breaking Caesar with statistics</a><a href="#ecc-attack">5. Breaking the restricted ECC key</a>
+    <a href="#design">6. Other attacks &amp; design flaws</a><a href="#conclusions">7. Conclusions</a><a href="#refs">References</a>
+  </nav>
+  <p style="font-size:.85rem">
+    Legend: <span class="tag req">required</span> asked by the assignment ·
+    <span class="tag opt">optional</span> optional part of the assignment ·
+    <span class="tag ours">extension</span> my addition
+  </p>
+</header>
+
+<div class="note">
+<b>Interpretation of the assignment.</b> The previous homeworks implemented the map private key → public key (Q = d·G, <a href="../hw1/">HW1</a>)
+and its role in wallets (<a href="../hw2/">HW2</a>), but not an encryption scheme. Here I build on that code the textbook
+<b>EC-ElGamal</b> encryption on the real secp256k1 curve, and — as the assignment states — <b>restrict only the receiver's private key</b>
+d to a small range [1, 2<sup>b</sup>) (b selectable, default 20 bits) so that attacks finish in seconds. Everything else uses full-size values.
+</div>
+<div class="note warn">Educational code: deliberately weak keys, no authentication, not constant-time. Do not use it to protect real data.</div>
+
+<!-- ======================================================================= -->
+<h2 id="ecc">1. Toy public-key encryption on secp256k1 <span class="tag req">required</span></h2>
+
+<h3>1.1 The algorithm, step by step</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Step</th><th>Who</th><th>Computation</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>1. Key generation</td><td>Bob</td><td class="mono">d ←$ [1, 2<sup>b</sup>) ;  Q = d·G</td><td class="wrap-ok">d private (here deliberately small), Q published. On real ECC d ∈ [1, n−1], n ≈ 2<sup>256</sup>.</td></tr>
+<tr><td>2. Encoding</td><td>Alice</td><td class="mono">bytes → M ∈ E(F<sub>p</sub>)</td><td class="wrap-ok">Each ≤ 29-byte block becomes a curve point (Koblitz's method: x = 256·m + j, first j giving a valid point). <b>Not</b> encryption: anyone can decode with x ≫ 8.</td></tr>
+<tr><td>3. Encryption</td><td>Alice</td><td class="mono">r ←$ [1, n−1] ;  R = r·G ;  S = r·Q ;  C = M + S</td><td class="wrap-ok">Fresh random r per block; the mask S hides M; Alice sends (R, C).</td></tr>
+<tr><td>4. Decryption</td><td>Bob</td><td class="mono">S = d·R ;  M = C − S ;  decode M</td><td class="wrap-ok">Bob rebuilds the same mask from R and his private key.</td></tr>
+</tbody></table></div>
+<p><b>Why decryption works:</b> d·R = d·(r·G) = r·(d·G) = r·Q = S, because scalar multiplication commutes (it is repeated addition in an abelian group) —
+the same identity behind the Diffie–Hellman key exchange. <b>Why it is (normally) secure:</b> Eve sees G, Q = d·G, R = r·G and C. Computing S = dr·G
+from d·G and r·G is the Computational Diffie–Hellman problem; recovering d from Q is the ECDLP of HW1. With full-size keys both are believed infeasible on secp256k1.</p>
+
+<div class="seq" aria-label="Message flow between Bob, the public channel and Alice">
+  <div class="who">Bob (receiver)</div><div class="who mid">public channel — Eve sees this</div><div class="who">Alice (sender)</div>
+  <div class="box"><b>1 · Key generation</b>secret <span class="secret">d</span>; public <span class="public">Q = d·G</span></div>
+  <div class="chan"><span class="arrow">→</span><span class="public">Q</span></div>
+  <div class="box"><b>Gets Q</b>no shared secret needed beforehand</div>
+  <div class="empty"></div><div class="empty"></div>
+  <div class="box"><b>2–3 · Encode &amp; encrypt</b>secret <span class="secret">r</span>, <span class="secret">S = r·Q</span>; public <span class="public">R = r·G</span>, <span class="public">C = M + S</span></div>
+  <div class="box"><b>4 · Decrypt</b><span class="secret">S = d·R</span>, M = C − S</div>
+  <div class="chan"><span class="arrow">←</span><span class="public">(R, C)</span></div>
+  <div class="empty"></div>
+</div>
+
+<h3>1.2 Try it</h3>
+<div class="card">
+  <div class="controls">
+    <label>Private-key range (toy restriction)
+      <select id="ecc-bits">
+        <option value="8">d &lt; 2^8</option><option value="12">d &lt; 2^12</option><option value="16">d &lt; 2^16</option>
+        <option value="20" selected>d &lt; 2^20</option><option value="24">d &lt; 2^24</option><option value="28">d &lt; 2^28</option><option value="32">d &lt; 2^32</option>
+      </select></label>
+    <button id="ecc-keygen">New key pair</button>
+  </div>
+  <div id="ecc-keys" class="table-wrap" style="margin-top:8px"></div>
+  <label class="caption" for="ecc-msg">Message (also used by the Caesar cipher in §2)</label>
+  <div class="controls"><input id="ecc-msg" type="text" value="Meet me at the Colosseum at noon" style="flex:1;min-width:220px">
+    <button id="ecc-encrypt" class="primary">Encrypt &amp; decrypt</button></div>
+  <h4>Encryption (Alice)</h4><div id="ecc-enc"></div>
+  <h4>Decryption (Bob)</h4><div id="ecc-dec"></div>
+</div>
+
+<h3>1.3 The role of each key</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Value</th><th>Owner</th><th>Secret?</th><th>Lifetime</th><th>Role</th></tr></thead>
+<tbody>
+<tr><td class="secret">d</td><td>Bob</td><td>yes</td><td>long-term</td><td class="wrap-ok">Decryption key. The <b>only</b> value restricted in this toy: its small range is what §5 exploits.</td></tr>
+<tr><td class="public">Q = d·G</td><td>Bob</td><td>no</td><td>long-term</td><td class="wrap-ok">Encryption key: anyone can encrypt to Bob. Also a perfect test for guesses of d (§5).</td></tr>
+<tr><td class="secret">r</td><td>Alice</td><td>yes</td><td>one block, then erased</td><td class="wrap-ok">Ephemeral key that randomises the ciphertext. Must be fresh and unpredictable: if leaked, S = r·Q decrypts; if reused, see §6.</td></tr>
+<tr><td class="public">R = r·G</td><td>—</td><td>no</td><td>part of ciphertext</td><td class="wrap-ok">Lets Bob rebuild S without knowing r.</td></tr>
+<tr><td class="secret">S = r·Q = d·R</td><td>Alice &amp; Bob</td><td>yes, never transmitted</td><td>one block</td><td class="wrap-ok">One-time <b>mask</b> added to the message — the counterpart of the Caesar key k (§3).</td></tr>
+</tbody></table></div>
+<p class="caption">Note that Alice needs no key of her own: the scheme gives confidentiality but no authentication — Bob cannot tell who sent the message (§6).</p>
+
+<!-- ======================================================================= -->
+<h2 id="caesar">2. The Caesar cipher <span class="tag req">required</span></h2>
+<p>Letters are numbers A = 0, …, Z = 25. With key k ∈ {0, …, 25}:</p>
+<pre>Encryption:  c = (p + k) mod 26        Decryption:  p = (c − k) mod 26</pre>
+<p>Suetonius reports that Julius Caesar used k = 3. Case is kept; spaces, digits and punctuation are copied unchanged (a common convention).</p>
+<div class="card">
+  <div class="controls"><label>Key k (0–25)<input id="cz-key" type="number" min="0" max="25" value="3"></label></div>
+  <div id="cz-out"></div>
+</div>
+
+<!-- ======================================================================= -->
+<h2 id="compare">3. Similarities and differences <span class="tag req">required</span></h2>
+<p><b>The common idea.</b> Both schemes encrypt by <i>adding a key-dependent mask in a group</i> and decrypt by subtracting it:
+Caesar adds k in the group Z<sub>26</sub>, EC-ElGamal adds the point S in the group E(F<sub>p</sub>). Everything else differs — above all
+<i>how often the mask is reused</i> and <i>who can compute it</i>.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Aspect</th><th>Caesar cipher</th><th>Toy EC-ElGamal (secp256k1)</th></tr></thead>
+<tbody>
+<tr><td>Type</td><td class="wrap-ok">Symmetric: the same secret k encrypts and decrypts; it must be shared in advance</td><td class="wrap-ok">Asymmetric: encrypt with public Q, decrypt with private d; no prior shared secret</td></tr>
+<tr><td>Encryption</td><td class="mono">c = p + k (mod 26), letter by letter</td><td class="mono">(R, C) = (r·G, M + r·Q), block by block</td></tr>
+<tr><td>Decryption</td><td class="mono">p = c − k (mod 26)</td><td class="mono">M = C − d·R</td></tr>
+<tr><td>Mask</td><td class="wrap-ok">The same k for every letter of every message</td><td class="wrap-ok">A fresh, unpredictable S for every block</td></tr>
+<tr><td>Deterministic?</td><td>Yes — same plaintext, same ciphertext</td><td class="wrap-ok">No — randomised by r (probabilistic encryption)</td></tr>
+<tr><td>Key space</td><td class="wrap-ok">26 keys (25 non-trivial) ≈ 4.7 bits</td><td class="wrap-ok">d: 2<sup>b</sup> here (toy), up to n ≈ 2<sup>256</sup> in real use; r: always ≈ 2<sup>256</sup></td></tr>
+<tr><td>Ciphertext size</td><td>Same as the plaintext</td><td class="wrap-ok">66 bytes per ≤ 29-byte block (≥ 2.3× expansion)</td></tr>
+<tr><td>Cost</td><td>Negligible</td><td class="wrap-ok">2 scalar multiplications per block (≈ 40 ms in this JavaScript)</td></tr>
+<tr><td>Ciphertext statistics</td><td class="wrap-ok">Letter distribution preserved up to a cyclic shift: same index of coincidence, same entropy, histogram rotated by k</td><td class="wrap-ok">Coordinates look uniform; no trace of letter frequencies; repeated plaintexts are not visible</td></tr>
+<tr><td>What an attacker exploits</td><td class="wrap-ok">The ciphertext itself (language redundancy) — §4</td><td class="wrap-ok">Not the ciphertext: the small range of d, checked against Q — §5</td></tr>
+<tr><td>Security level</td><td class="wrap-ok">None: broken by hand</td><td class="wrap-ok">Toy: broken by key search. Full-size keys: secure against eavesdroppers (IND-CPA under the Decisional Diffie–Hellman assumption), but malleable (§6)</td></tr>
+</tbody></table></div>
+
+<h3>3.1 Statistical properties of the ciphertexts <span class="tag ours">measured</span></h3>
+<p>The same 1,200-character excerpt of <i>Alice's Adventures in Wonderland</i> is encrypted with both schemes (Caesar with the key of §2, EC-ElGamal with the public key of §1).</p>
+<div class="card">
+  <button id="cmp-run">Run again with new randomness</button>
+  <div class="stat-row" id="cmp-stats"></div>
+  <div class="grid2">
+    <div><div class="chart-title">Plaintext</div><div id="cmp-plain"></div></div>
+    <div><div class="chart-title">Caesar ciphertext: same shape, rotated</div><div id="cmp-caesar"></div></div>
+  </div>
+  <div class="chart-title">EC-ElGamal ciphertext: x-coordinates of R and C as bytes (dashed = uniform)</div>
+  <div id="cmp-ecc" class="single-chart"></div>
+  <div id="cmp-twice" class="table-wrap"></div>
+</div>
+<p>The index of coincidence IC = Σ nᵢ(nᵢ−1)/(N(N−1)) — the probability that two random letters of the text coincide — is ≈ 0.066 for English and is
+<b>exactly unchanged</b> by Caesar, because a permutation of the alphabet does not change the multiset of counts. That invariance is the statistical leak
+§4 exploits. The EC ciphertext bytes instead pass the χ² uniformity test and have IC ≈ 1/256: they carry no usable frequency information.
+Uniformity is not proof of security (HW1 §6), but non-uniformity like Caesar's is proof of insecurity.</p>
+
+<!-- ======================================================================= -->
+<h2 id="cryptanalysis">4. Statistical cryptanalysis of the Caesar cipher <span class="tag req">required</span></h2>
+
+<h3>4.1 The known language: corpus and model</h3>
+<p>Training corpus: ≈ 300,000 letters of public-domain English (Austen, <i>Persuasion</i>; Chesterton, <i>The Man Who Was Thursday</i>; Melville, <i>Moby Dick</i>),
+from Project Gutenberg via the NLTK corpus. Test texts are <b>never</b> used for training: Carroll, <i>Alice's Adventures in Wonderland</i> (main test) and
+Shakespeare, <i>Julius Caesar</i> in its 1599 spelling (an atypical text). Files: <a href="data/corpus-train.txt">train</a> ·
+<a href="data/corpus-test.txt">test</a> · <a href="data/corpus-shakespeare.txt">Shakespeare</a>.</p>
+<div class="stat-row" id="lm-stats"></div>
+<div id="lm-chart" class="single-chart"></div>
+<p>How many letters should be needed? Shannon's <b>unicity distance</b> U = H(K)/D is the ciphertext length beyond which, on average, only one key yields
+meaningful text. H(K) = log₂26 is the key entropy and D the redundancy of the language per letter. The more structure a model captures (letters → pairs → triples),
+the lower the entropy, the higher the redundancy and the fewer letters are needed:</p>
+<div class="table-wrap"><table id="lm-entropy"></table></div>
+
+<h3>4.2 The algorithm</h3>
+<pre>
+input: ciphertext c, letter probabilities p₀…p₂₅ estimated from the corpus
+for s in 0 … 25:                          # exhaustive search over the key space
+    Oᵢ(s) = number of letters i in D_s(c)  = count of ciphertext letter (i + s) mod 26
+    χ²(s) = Σᵢ (Oᵢ(s) − L·pᵢ)² / (L·pᵢ)    # L = number of letters
+return the s with the smallest χ²(s)
+</pre>
+<p><b>Why it works.</b> With the right key the candidate is English, so Oᵢ/L → pᵢ (law of large numbers) and χ² stays around its degrees of freedom (≈ 25)
+whatever the length. With a key wrong by t the candidate follows the <i>rotated</i> distribution p<sub>i+t</sub>, and the expected χ² grows like
+25 + L·Δ<sub>t</sub>, with Δ<sub>t</sub> = Σᵢ (p<sub>i+t</sub> − pᵢ)²/pᵢ (Δ<sub>min</sub> is shown above). The signal grows linearly with L, the noise only like √L:
+longer ciphertexts make the attack <i>easier</i>, the opposite of what a cipher should do.</p>
+<p><b>Caveat.</b> The χ² <i>test</i> needs every expected count L·pᵢ ≥ 5, i.e. L ≳ 11,000 letters because of “z” — never satisfied here. We use χ² as a
+<i>distance score</i>, not as a hypothesis test. With few letters, one rare letter dominates the sum (a single “z” in 10 letters adds ≈ 220), which is why
+likelihood-based scores below do better on short texts.</p>
+<p><b>Alternative scores</b> <span class="tag opt">optional</span>, all plugged into the same 26-key loop:</p>
+<ul>
+<li><b>Most frequent letter = E</b>: no loop needed, but uses one number out of 26.</li>
+<li><b>Unigram log-likelihood</b> ℓ(s) = Σₜ log p(xₜ): maximum likelihood, equivalent to minimum cross-entropy with the corpus model.</li>
+<li><b>Bigram / trigram log-likelihood</b>: ℓ(s) = log p(x₁) + Σ log p(xₜ | xₜ₋₁) [ + … ] — a Markov model of the language, add-one smoothing for unseen n-grams.</li>
+<li><b>Dictionary</b>: fraction of letters in words found in the corpus vocabulary (uses the word boundaries that Caesar leaves visible).</li>
+</ul>
+
+<h3>4.3 Attack a ciphertext</h3>
+<div class="card">
+  <label class="caption" for="ca-input">Ciphertext (default: a sentence encrypted with the key of §2 — paste any Caesar ciphertext)</label>
+  <textarea id="ca-input" spellcheck="false"></textarea>
+  <div class="controls" style="margin-top:8px">
+    <label>Score to plot
+      <select id="ca-method">
+        <option value="chi2" selected>χ² vs corpus frequencies</option><option value="maxE">Most frequent letter = E</option>
+        <option value="uni">Unigram log-likelihood</option><option value="bi">Bigram log-likelihood</option>
+        <option value="tri">Trigram log-likelihood</option><option value="dict">Dictionary words</option>
+      </select></label>
+    <button id="ca-run" class="primary">Recover the key</button>
+  </div>
+  <div id="ca-chart" class="single-chart"></div>
+  <div id="ca-out"></div>
+</div>
+
+<h3>4.4 Effectiveness vs ciphertext length</h3>
+<p>Random excerpts of the test text with exactly L letters, random key 1–25; success = the exact key is recovered.</p>
+<div class="card">
+  <div class="controls">
+    <label>Test text<select id="exp-source"><option value="test" selected>Alice (prose, 1865)</option><option value="shakespeare">Julius Caesar (verse, 1599 spelling)</option></select></label>
+    <label>Excerpts per length<select id="exp-trials"><option>200</option><option selected>500</option><option>1500</option></select></label>
+    <button id="exp-run" class="primary">Run experiment</button>
+  </div>
+  <div class="progress"><div id="exp-progress"></div></div>
+  <div id="exp-chart"></div>
+  <p class="caption" id="exp-note"></p>
+  <details><summary>Table of success rates</summary><div class="table-wrap"><table id="exp-table"></table></div></details>
+</div>
+<p><b>Reading the results.</b></p>
+<ul>
+<li>Every frequency-based method reaches ≈ 100% within a few tens of letters; the point where each method reaches ≈ 80% matches its unicity distance in §4.1
+(≈ 9 letters for unigram scores, ≈ 3–4 for trigrams). Shannon's theory predicts the experiment quite well.</li>
+<li>Exploiting more structure helps most when text is short: trigram ≥ bigram ≥ dictionary ≥ unigram ≈ χ² ≫ “E” heuristic.</li>
+<li>The “E” heuristic stays poor even at 100 letters: p(e) ≈ 12.5% vs p(t) ≈ 9% and p(a) ≈ 8%, and with L = 100 the counts are ≈ 12.5 ± 3.3 vs 9 ± 2.9, so
+the most frequent letter is often not E. Using all 26 frequencies at once is what makes χ² and likelihood scores robust.</li>
+<li>The Shakespeare text (old spelling, verse, character names) is attacked almost as well: success is somewhat lower on very short excerpts,
+because its spelling and names are less predictable for a model trained on later prose, but it reaches ≈ 100% from about 15 letters. Caesar only needs
+the <i>right shift</i> among 26, and the overall shape of the letter distribution is stable across styles.</li>
+</ul>
+
+<h3>4.5 Comparison of approaches <span class="tag opt">optional</span></h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Approach</th><th>What it needs</th><th>Letters needed (≈ 80% success)</th><th>Strength</th><th>Weakness</th></tr></thead>
+<tbody>
+<tr><td>Exhaustive key search, human judge</td><td>26 decryptions</td><td class="wrap-ok">a few words</td><td class="wrap-ok">Always applicable: key space is tiny</td><td class="wrap-ok">Not automatic; it is the <i>recognition</i> that needs statistics</td></tr>
+<tr><td>Most frequent letter = E</td><td>one letter count</td><td class="wrap-ok">≈ 300</td><td>Trivial, by hand</td><td class="wrap-ok">Ignores 25 of 26 frequencies</td></tr>
+<tr><td>χ² / unigram likelihood</td><td>letter frequencies</td><td>≈ 10–12</td><td class="wrap-ok">Simple, explainable, needs a small corpus</td><td class="wrap-ok">Ignores letter order; χ² unstable with rare letters</td></tr>
+<tr><td>Bigram / trigram likelihood</td><td>n-gram tables (26², 26³)</td><td>≈ 5 / ≈ 4</td><td class="wrap-ok">Best on short texts</td><td class="wrap-ok">Needs larger corpus and smoothing; more computation</td></tr>
+<tr><td>Dictionary words</td><td>vocabulary + word boundaries</td><td>≈ 6</td><td class="wrap-ok">Very effective when spaces are kept</td><td class="wrap-ok">Fails if spaces are removed or words are rare/proper names</td></tr>
+</tbody></table></div>
+<p class="caption">“Letters needed”: approximate length at which the method recovers the key in ≈ 80% of cases, from the experiment above on the Alice test text (500 excerpts per length).</p>
+
+<h3>4.6 Limitations</h3>
+<ul>
+<li><b>Short texts.</b> Below the unicity distance several keys give plausible text: e.g. CHEER shifted by 7 is JOLLY — both valid words,
+so no statistical method can decide.</li>
+<li><b>Atypical texts.</b> A text that avoids frequent letters breaks frequency assumptions. Demo — a lipogram without the letter E:</li>
+</ul>
+<div class="card" id="lipo-out"></div>
+<ul>
+<li><b>Wrong language model.</b> The scores assume the plaintext language is known: an Italian ciphertext should be scored with an Italian corpus
+(different frequencies, e.g. more A, I, O). With the wrong model short texts fail more often.</li>
+<li><b>Assumptions on the cipher.</b> The attack knows the cipher is Caesar. For a general substitution (26! ≈ 2<sup>88</sup> keys) exhaustive search
+is impossible and statistics must guide a heuristic search; for Vigenère the index of coincidence first reveals the key length.</li>
+<li><b>Non-text plaintexts</b> (numbers, compressed data) have no linguistic redundancy and cannot be attacked this way — but the key space of 26 still
+falls to exhaustive search if <i>any</i> criterion recognises the right plaintext.</li>
+</ul>
+
+<!-- ======================================================================= -->
+<h2 id="ecc-attack">5. Breaking the toy ECC scheme through its restricted key space <span class="tag req">required</span></h2>
+
+<h3>5.1 Attack design</h3>
+<p><b>Threat model.</b> Eve knows the curve, G, Bob's public key Q, the range bound 2<sup>b</sup>, and intercepts (R, C). The key observation is that
+<b>Q itself is an exact test for any guess of d</b>: the guess is right if and only if guess·G = Q. No ciphertext and no statistics are needed to find d.</p>
+<div class="grid2">
+<div class="card"><h4 style="margin-top:0">Brute force — O(K) time, O(1) memory</h4>
+<pre style="margin:0">R ← O
+for k = 1 … K−1:
+    R ← R + G          # R = k·G, one addition
+    if R = Q: return k</pre>
+<p class="caption">With d uniform in [1, K), the number of steps is uniform too: expected K/2.</p></div>
+<div class="card"><h4 style="margin-top:0">Baby-step giant-step — O(√K) time and memory</h4>
+<pre style="margin:0">m ← ⌈√K⌉ ;  write d = i·m + j
+baby:  T[j·G] = j   for j = 0 … m−1
+giant: Γ ← Q
+for i = 0 … m:
+    if Γ in T: return i·m + T[Γ]
+    Γ ← Γ − m·G</pre>
+<p class="caption">If Q − i·m·G = j·G then Q = (i·m + j)·G. A time–memory trade-off (Shanks).</p></div>
+</div>
+<p><b>Decrypting “otherwise”?</b> The other secrets are not weak: r is full-size (recovering it from R is a 256-bit ECDLP) and computing S from Q and R
+is the Diffie–Hellman problem. In this scheme the restricted d is the <i>only</i> door, and once it is open Eve decrypts exactly like Bob.</p>
+
+<h3>5.2 Live attack on the key pair of §1</h3>
+<div class="card">
+  <p id="atk-info" class="caption"></p>
+  <div class="controls">
+    <button id="atk-bsgs" class="primary">Run baby-step giant-step</button>
+    <button id="atk-brute">Run brute force</button>
+    <button id="atk-stop" disabled>Stop</button>
+  </div>
+  <div class="progress"><div id="atk-progress"></div></div>
+  <div id="atk-out"></div>
+</div>
+
+<h3>5.3 Cost vs key size, and why full-size ECC resists</h3>
+<div class="card">
+  <button id="scale-run" class="primary">Measure (≈ 10 s)</button>
+  <div class="progress"><div id="scale-progress"></div></div>
+  <div id="scale-chart"></div>
+  <p class="caption">Each extra key bit doubles brute-force time and multiplies BSGS time by √2: on a log scale the lines have slopes 1 and ½.
+  For very small b the measured times sit above the dashed lines because fixed costs (building the table, browser scheduling) dominate the few additions.
+  Brute-force times vary because d is random: the number of steps is uniform between 1 and 2<sup>b</sup>.</p>
+</div>
+<p>Extrapolation from the speed measured on this device (expected values):</p>
+<div class="table-wrap"><table id="extra-table"></table></div>
+
+<h3>5.4 Two very different attacks</h3>
+<div class="table-wrap"><table>
+<thead><tr><th></th><th>Statistical attack on Caesar</th><th>Key-space attack on toy ECC</th></tr></thead>
+<tbody>
+<tr><td>Target</td><td class="wrap-ok">The ciphertext (ciphertext-only attack)</td><td class="wrap-ok">The public key; the ciphertext is only decrypted afterwards</td></tr>
+<tr><td>Information exploited</td><td class="wrap-ok">Redundancy of the plaintext language (frequencies, n-grams)</td><td class="wrap-ok">The public algebraic relation Q = d·G and the known bound d &lt; 2<sup>b</sup></td></tr>
+<tr><td>Testing a candidate key</td><td class="wrap-ok">Probabilistic score; can choose a wrong key on short texts</td><td class="wrap-ok">Exact: exactly one d in range satisfies d·G = Q</td></tr>
+<tr><td>Hard part</td><td class="wrap-ok">Recognising the right plaintext (search is trivial: 26 keys)</td><td class="wrap-ok">The size of the search (recognition is trivial)</td></tr>
+<tr><td>Effect of more ciphertext</td><td>Makes it easier</td><td>Irrelevant</td></tr>
+<tr><td>Role of statistics</td><td>Essential</td><td class="wrap-ok">None in the test; only in the expected cost (uniform d ⇒ K/2 steps)</td></tr>
+<tr><td>Fix</td><td class="wrap-ok">None within the scheme: it is the design (one reused mask, 26 keys) that leaks</td><td class="wrap-ok">Draw d uniformly from [1, n−1] with a CSPRNG</td></tr>
+</tbody></table></div>
+<p>In both cases the attack is, at its core, an exhaustive search. Caesar fails because its key space is tiny <i>and</i> its ciphertext keeps the statistics
+of the plaintext; the toy ECC scheme hides the plaintext statistics perfectly and fails <i>only</i> because of the artificially small key space.</p>
+
+<h3>5.5 Why the same approach fails against properly configured ECC</h3>
+<ul>
+<li><b>Key space.</b> With d uniform in [1, n−1], n ≈ 2<sup>256</sup>, brute force needs ≈ 2<sup>255</sup> additions on average (last row of the table).</li>
+<li><b>The best generic attacks only reach the square root.</b> BSGS would need ≈ 2<sup>128</sup> stored points — more memory than exists. Pollard's rho
+needs no memory but still ≈ √(πn/4) ≈ 2<sup>127.8</sup> additions. Shoup (1997) proved that <i>any</i> generic algorithm needs on the order of √n group operations,
+so this is a lower bound for attacks that only use the group law.</li>
+<li><b>No known shortcut for secp256k1.</b> Its group order is prime (Pohlig–Hellman cannot split the problem), the curve is not anomalous (Smart's attack;
+see the p = 547 example in HW1), and its embedding degree is huge (pairing-based MOV/FR reductions do not apply). Its special endomorphism gives only a small
+constant speed-up.</li>
+<li><b>Scale of public records.</b> The largest ECDLP publicly solved on a prime-field curve is 112 bits (2009, a cluster of more than 200 PlayStation 3 consoles).
+For rho, 256 bits is 2<sup>72</sup> times more work.</li>
+<li><b>“Not necessarily” feasible — but other doors exist.</b> Full-size keys stop key search, not every attack: bad randomness for d or r (biased ECDSA nonces,
+HW1 §7.3), side channels in non-constant-time code, missing point validation (invalid-curve attacks), protocol flaws (§6), and, in the future, Shor's algorithm
+on a large quantum computer.</li>
+</ul>
+
+<!-- ======================================================================= -->
+<h2 id="design">6. Other attacks: key-space weaknesses vs design weaknesses <span class="tag opt">optional</span></h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Weakness</th><th>Origin</th><th>Effect</th><th>Countermeasure</th></tr></thead>
+<tbody>
+<tr><td>Brute force / BSGS on d</td><td>restricted key space</td><td class="wrap-ok">Recover d in O(2<sup>b</sup>) / O(2<sup>b/2</sup>) (§5)</td><td class="wrap-ok">Full-range random d</td></tr>
+<tr><td>Pollard's kangaroo (lambda)</td><td>restricted key space</td><td class="wrap-ok">O(2<sup>b/2</sup>) time like BSGS but almost no memory; designed for keys known to lie in an interval</td><td class="wrap-ok">Full-range random d</td></tr>
+<tr><td>Batch / precomputation attack</td><td>restricted key space</td><td class="wrap-ok">One BSGS table, built before any message exists, serves <i>every</i> user with a b-bit key; each extra victim costs only the giant steps</td><td class="wrap-ok">Full-range random d</td></tr>
+<tr><td>Real-world example</td><td>restricted key space</td><td class="wrap-ok">The Bitcoin “puzzle” addresses use secp256k1 keys confined to intervals [2<sup>k−1</sup>, 2<sup>k</sup>); once a public key is visible, interval methods like kangaroo apply</td><td>—</td></tr>
+<tr><td>Ephemeral-key reuse</td><td>design</td><td class="wrap-ok">Same r ⇒ same mask S: C₁ − C₂ = M₁ − M₂; one known plaintext reveals S and every other block — demo below</td><td class="wrap-ok">Fresh r for every encryption</td></tr>
+<tr><td>Weak RNG for r</td><td>design</td><td class="wrap-ok">If r is small or predictable, BSGS on R gives r, then S = r·Q — even with a full-size d</td><td class="wrap-ok">CSPRNG, full-range r</td></tr>
+<tr><td>Malleability</td><td>design</td><td class="wrap-ok">Eve can change C without any key: if she can guess M (fixed-format messages), C′ = C − M + M′ decrypts to her M′</td><td class="wrap-ok">Authenticated encryption (MAC/AEAD)</td></tr>
+<tr><td>No sender authentication</td><td>design</td><td class="wrap-ok">Anyone can encrypt to Q; Bob cannot know who wrote the message</td><td class="wrap-ok">Digital signatures (ECDSA/Schnorr)</td></tr>
+<tr><td>Length leakage</td><td>design</td><td class="wrap-ok">The number of blocks reveals the message length within 29 bytes</td><td class="wrap-ok">Padding</td></tr>
+<tr><td>Invalid points / error messages</td><td>implementation</td><td class="wrap-ok">Decrypting points not on the curve, or revealing why decoding failed, can leak information about d</td><td class="wrap-ok">Point validation (done here), uniform errors</td></tr>
+<tr><td>Timing side channels</td><td>implementation</td><td class="wrap-ok">Non-constant-time scalar multiplication leaks bits of d</td><td class="wrap-ok">Constant-time code</td></tr>
+</tbody></table></div>
+<p>Real systems fix the design issues with <b>ECIES</b>: an ephemeral ECDH exchange (fresh r, like here), a key-derivation function on the shared point,
+and symmetric <i>authenticated</i> encryption (e.g. AES-GCM) for the message — with a full-range private key.</p>
+
+<h3>6.1 Demo: when the toy scheme becomes a substitution cipher</h3>
+<p>Naive variant: one point per character and <b>one</b> ephemeral key r for the whole message, so every character gets the same mask S —
+exactly like Caesar reuses k. The private key is a <b>full 256-bit</b> key: the attacks below never touch it.</p>
+<div class="card">
+  <button id="weak-run" class="primary">Encrypt 1,500 characters and attack</button>
+  <div id="weak-out"></div>
+</div>
+<p>The same lesson as Caesar: a cipher that maps equal plaintext symbols to equal ciphertext symbols leaks the frequency distribution of the language,
+whatever the size of its key. Here the key size is enormous and yet ≈ half of the text is readable from frequencies alone.</p>
+
+<!-- ======================================================================= -->
+<h2 id="conclusions">7. Conclusions</h2>
+<ol>
+<li><b>Same skeleton, different security.</b> Caesar and EC-ElGamal both add a mask in a group. Caesar reuses one mask from a set of 26; EC-ElGamal derives a fresh,
+unpredictable mask for every block from a public key.</li>
+<li><b>Statistics break Caesar.</b> The ciphertext keeps the language's distribution (identical index of coincidence), so a corpus-based score recognises the key from
+≈ 5–12 letters, as Shannon's unicity distance predicts.</li>
+<li><b>Key space breaks the toy ECC.</b> Its ciphertext shows no usable statistics, but the restricted d can be found from Q alone, exactly and without statistics,
+in O(2<sup>b/2</sup>) with baby-step giant-step.</li>
+<li><b>Full-size keys move the attack out of reach.</b> ≈ 2<sup>128</sup> operations for the best generic attack, with a matching lower bound.
+What remains are failures of randomness, implementation and design — which is why §6 matters as much as key length.</li>
+</ol>
+
+<!-- ======================================================================= -->
+<h2 id="refs">References</h2>
+<ul style="font-size:.9rem">
+<li>C. E. Shannon, <i>Communication Theory of Secrecy Systems</i>, Bell System Technical Journal 28(4), 1949 — redundancy and unicity distance.</li>
+<li>T. ElGamal, <i>A public key cryptosystem and a signature scheme based on discrete logarithms</i>, IEEE Trans. Inf. Theory 31(4), 1985.</li>
+<li>N. Koblitz, <i>Elliptic curve cryptosystems</i>, Mathematics of Computation 48, 1987 — including the message-to-point encoding.</li>
+<li>D. Shanks, <i>Class number, a theory of factorization and genera</i>, 1971 — baby-step giant-step.</li>
+<li>J. M. Pollard, <i>Monte Carlo methods for index computation (mod p)</i>, Mathematics of Computation 32, 1978 — rho and kangaroo methods.</li>
+<li>V. Shoup, <i>Lower bounds for discrete logarithms and related problems</i>, EUROCRYPT 1997.</li>
+<li>J. W. Bos et al., <a href="https://www.metzdowd.com/pipermail/cryptography/2009-July/015476.html">112-bit prime ECDLP solved</a> (announcement, 2009).</li>
+<li>SEC 1: Elliptic Curve Cryptography (ECIES); SEC 2: Recommended Elliptic Curve Domain Parameters (secp256k1).</li>
+<li><a href="https://nickyreinert.de/en/2024/2024-10-01-bitcoin-puzzle/">The Bitcoin puzzle: key ranges and search approaches</a> (2024).</li>
+<li>Suetonius, <i>De Vita Caesarum</i>, Divus Iulius 56 — Caesar's shift of three.</li>
+<li>Corpus: Project Gutenberg texts as distributed in the NLTK <i>gutenberg</i> corpus (public domain).</li>
+</ul>
+
+<footer>
+  Source: <a href="js/toyecc.js">toyecc.js</a> · <a href="js/caesar.js">caesar.js</a> · <a href="js/cryptanalysis.js">cryptanalysis.js</a> ·
+  <a href="js/attack.js">attack.js</a> · <a href="js/weakvariant.js">weakvariant.js</a> · <a href="js/app.js">app.js</a>
+  (+ HW1 <a href="../hw1/js/ec.js">ec.js</a>, <a href="../hw1/js/stats.js">stats.js</a>). Everything runs in your browser.<br>
+  Developed with the support of an AI assistant (Claude) used as a tutor; design choices, results and interpretations were reviewed and discussed by the author.
+</footer>
+</div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
