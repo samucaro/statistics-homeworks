@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HW4 · Welford and Sampling</title>
+<meta name="description" content="Ex. 1: derivation and code of Welford's recurrences for the sum of squares and the variance. Ex. 2: sampling mean and variance of m hackers' scores on n systems, compared with the theoretical μ and σ².">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="css/hw4.css">
+</head>
+<body>
+<div class="wrap">
+
+<header class="site">
+  <div class="crumb"><a href="../">Statistics · Homeworks</a> / HW4</div>
+  <h1>Homework 4 — Welford's recurrences and the sampling mean and variance</h1>
+  <p class="lead">Statistics · MSc in Cybersecurity, Sapienza University of Rome · A.A. 2026/27</p>
+  <nav class="toc" aria-label="Exercise 1">
+    <b class="toc-part">Ex. 1 — Welford's recurrence formulas</b>
+    <a href="#why">1. Why a recurrence</a><a href="#knuth">2. Knuth: the mean</a><a href="#ss">3. Welford: SS</a>
+    <a href="#variance">4. Variance</a><a href="#code">5. Code</a><a href="#example">6. Worked example</a><a href="#stability">7. Numerical stability</a>
+  </nav>
+  <nav class="toc" aria-label="Exercise 2">
+    <b class="toc-part">Ex. 2 — Sampling mean and variance</b>
+    <a href="#setup">8. Model and theory</a><a href="#compare">9. Averages vs μ and σ²</a><a href="#spread">10. Effect of n</a>
+    <a href="#inference">11. Why it matters for inference</a><a href="#security">12. Security reading</a><a href="#conclusions">13. Conclusions</a><a href="#refs">References</a>
+  </nav>
+  <p style="font-size:.85rem">
+    Legend: <span class="tag req">required</span> asked by the assignment ·
+    <span class="tag ours">extension</span> my addition
+  </p>
+</header>
+
+<!-- ======================================================================= -->
+<div class="part-banner" id="part1">
+  <span class="part-label">Exercise 1</span>
+  <h2 class="part-title">Welford's recurrence formulas</h2>
+  <p class="caption">Derive the recurrences for the sum of squares and the variance with the same approach as Knuth's recurrence for the mean, and code them.</p>
+</div>
+
+<h2 id="why">1. Why a recurrence?</h2>
+<p>The textbook definitions x̄ = (1/n)Σxᵢ and s² = Σ(xᵢ − x̄)²/(n − 1) need <b>all</b> the data: the mean must be known before the squared deviations can
+be summed (two passes). A <b>recurrence</b> updates the statistics one observation at a time, so that:</p>
+<ul>
+<li>data can be processed as a <b>stream</b> (log events, network measurements) in a single pass, with O(1) memory and nothing stored;</li>
+<li>the current mean and variance are available <b>at every step</b>, not only at the end;</li>
+<li>the computation is <b>numerically stable</b>, unlike the one-pass shortcut Σx² − (Σx)²/n (§7).</li>
+</ul>
+
+<h2 id="knuth">2. Knuth's recurrence for the mean <span class="tag req">required</span></h2>
+<p>Let Mₖ be the mean of the first k observations. Separate the last one from the others:</p>
+<div class="formula-box">Mₖ = (1/k) Σᵢ₌₁ᵏ xᵢ = ((k − 1)·Mₖ₋₁ + xₖ) / k = Mₖ₋₁ + (xₖ − Mₖ₋₁)/k,     M₀ = 0</div>
+<p>The pattern is <b>new value = old value + correction</b>, where the correction depends only on the new observation's deviation from the
+<i>old</i> mean. No sum is ever stored, so it never grows large.</p>
+
+<h2 id="ss">3. Welford's recurrence for the sum of squares <span class="tag req">required</span></h2>
+<p>Let SSₖ = Σᵢ₌₁ᵏ (xᵢ − Mₖ)² be the sum of squared deviations from the current mean. We look for SSₖ in terms of SSₖ₋₁, exactly as above.</p>
+<div class="formula-box">
+<span class="lbl">Step 1 — expand the square</span><br>
+SSₖ = Σ xᵢ² − 2Mₖ Σ xᵢ + k·Mₖ² = Σᵢ₌₁ᵏ xᵢ² − k·Mₖ²          (because Σ xᵢ = k·Mₖ)<br>
+<span class="lbl">Step 2 — subtract the same expression for k − 1: the common part Σᵢ₌₁ᵏ⁻¹ xᵢ² cancels</span><br>
+SSₖ − SSₖ₋₁ = xₖ² − k·Mₖ² + (k − 1)·Mₖ₋₁²<br>
+<span class="lbl">Step 3 — write everything with d = xₖ − Mₖ₋₁ and Knuth's formula Mₖ = Mₖ₋₁ + d/k</span><br>
+xₖ² = Mₖ₋₁² + 2Mₖ₋₁d + d²<br>
+k·Mₖ² = k·Mₖ₋₁² + 2Mₖ₋₁d + d²/k<br>
+<span class="lbl">Step 4 — substitute: the Mₖ₋₁² and Mₖ₋₁d terms cancel</span><br>
+SSₖ − SSₖ₋₁ = Mₖ₋₁² + 2Mₖ₋₁d + d² − k·Mₖ₋₁² − 2Mₖ₋₁d − d²/k + (k − 1)·Mₖ₋₁² = d² − d²/k = d²·(k − 1)/k<br>
+<span class="lbl">Step 5 — recognise the new deviation: xₖ − Mₖ = d − d/k = d·(k − 1)/k, hence d²(k − 1)/k = d·(xₖ − Mₖ)</span>
+</div>
+<div class="formula-box key"><b>SSₖ = SSₖ₋₁ + (xₖ − Mₖ₋₁)·(xₖ − Mₖ)</b>,     SS₀ = 0</div>
+<p>The correction is the product of the new observation's deviation from the <b>old</b> mean and from the <b>new</b> mean. Both are small numbers of
+the order of σ, which is the source of the stability shown in §7. Check at k = 1: M₁ = x₁, so SS₁ = (x₁ − 0)(x₁ − x₁) = 0, as it must be.</p>
+
+<h2 id="variance">4. Recurrences for the variance <span class="tag req">required</span></h2>
+<p>The variance is SS divided by a count. Dividing the recurrence above (with SSₖ₋₁ = (k − 2)s²ₖ₋₁ and d·(xₖ − Mₖ) = d²(k − 1)/k):</p>
+<div class="formula-box">
+Sample variance (unbiased):      s²ₖ = SSₖ/(k − 1),   s²ₖ = ((k − 2)/(k − 1))·s²ₖ₋₁ + d²/k        for k ≥ 2<br>
+Population variance (plug-in):   σ̂²ₖ = SSₖ/k,        σ̂²ₖ = ((k − 1)/k)·σ̂²ₖ₋₁ + d²(k − 1)/k²
+</div>
+<p>In practice one updates SS (a single product) and divides only when the variance is needed: it is cheaper and avoids accumulating rounding
+in the (k − 2)/(k − 1) factor. Why k − 1 and not k is the subject of Ex. 2 (§8).</p>
+
+<h2 id="code">5. Code <span class="tag req">required</span></h2>
+<p>The core logic is three lines; everything else is bookkeeping. JavaScript, as used on this page (<a href="js/welford.js">welford.js</a>):</p>
+<pre class="code">let k = 0, mean = 0, ss = 0;
+function push(x) {
+  k++;
+<span class="core">  const d = x - mean;        // deviation from the OLD mean</span>
+<span class="core">  mean += d / k;             // Knuth</span>
+<span class="core">  ss += d * (x - mean);      // Welford: old deviation × new deviation</span>
+}
+const variance = () => ss / (k - 1);   // sample variance, k ≥ 2</pre>
+<p>The same in Python:</p>
+<pre class="code">k, mean, ss = 0, 0.0, 0.0
+for x in data:
+    k += 1
+<span class="core">    d = x - mean</span>
+<span class="core">    mean += d / k</span>
+<span class="core">    ss += d * (x - mean)</span>
+variance = ss / (k - 1)</pre>
+<p class="caption"><span class="tag ours">extension</span> <a href="js/welford.js">welford.js</a> also contains the merge rule of Chan, Golub and LeVeque: two
+accumulators (n<sub>A</sub>, M<sub>A</sub>, SS<sub>A</sub>) and (n<sub>B</sub>, M<sub>B</sub>, SS<sub>B</sub>) combine with δ = M<sub>B</sub> − M<sub>A</sub> into
+SS = SS<sub>A</sub> + SS<sub>B</sub> + δ²·n<sub>A</sub>n<sub>B</sub>/n — useful when data are split across machines or log shards.</p>
+
+<h2 id="example">6. Worked example</h2>
+<div class="card">
+  <div class="controls"><label style="flex:1">Data (scores, separated by spaces)<input id="ex-input" type="text" value="3 7 1 8 4 10 2"></label>
+    <button id="ex-run" class="primary">Run Welford</button></div>
+  <div class="table-wrap"><table id="ex-table"></table></div>
+  <p id="ex-check" class="caption"></p>
+</div>
+
+<h2 id="stability">7. Numerical stability <span class="tag ours">extension</span></h2>
+<p>10,000 scores uniform on [0, 10] (true variance ≈ <span id="stab-ref"></span>), shifted by a constant c. Adding a constant does not change the
+variance, so every method should return the same value:</p>
+<div class="table-wrap"><table id="stab-table"></table></div>
+<p><b>Why the shortcut fails.</b> Σx² and (Σx)²/n are two huge, nearly equal numbers whose difference is the small quantity of interest. With c = 10⁸ each x² is
+≈ 10¹⁶, where consecutive double-precision numbers are 2 apart; after 10,000 additions the rounding error is far larger than SS ≈ 8·10⁴ itself, and the
+result can even be <b>negative</b> — an impossible variance. This is <i>catastrophic cancellation</i>. Welford only ever handles deviations d of the order of σ,
+so its error is governed by σ, not by the size of the data. The small residual error for very large c comes partly from the data themselves: near 10¹⁰ a
+double can only represent multiples of ≈ 2·10⁻⁶, so the scores are already rounded before any algorithm sees them.</p>
+
+<!-- ======================================================================= -->
+<div class="part-banner" id="part2">
+  <span class="part-label">Exercise 2</span>
+  <h2 class="part-title">Sampling mean and variance</h2>
+  <p class="caption">Extension of HW3: each penetration attempt now gets a score between 0 and 10. m hackers, n systems each, Welford for every hacker,
+  then averages across hackers compared with μ and σ².</p>
+</div>
+
+<h2 id="setup">8. Model and theory <span class="tag req">required</span></h2>
+<p>Hacker j attempts systems 1, …, n and gets scores X₁⁽ʲ⁾, …, Xₙ⁽ʲ⁾, i.i.d. from a fixed distribution on [0, 10] with mean μ and variance σ²; hackers are
+independent. For each hacker, Welford's recurrences give the <b>sampling mean</b> x̄ⱼ and <b>sampling variance</b> s²ⱼ of its n scores.
+Each of them is a random variable: a different trajectory would give different values. Their distribution across hackers is the
+<b>sampling distribution</b>.</p>
+<div class="card">
+  <div class="controls">
+    <label>Score distribution<select id="dist"></select></label>
+    <label>Hackers m<select id="m"><option>500</option><option>2000</option><option selected>5000</option><option>20000</option></select></label>
+    <label>Seed<input id="seed" type="number" value="2026"></label>
+    <button id="run" class="primary">Simulate</button>
+  </div>
+  <p id="dist-desc" class="caption"></p>
+  <div class="grid2" style="align-items:center">
+    <div id="dist-chart"></div>
+    <div class="stat-row" id="dist-stats"></div>
+  </div>
+  <div class="progress"><div id="progress"></div></div>
+  <p id="run-info" class="caption"></p>
+</div>
+<p class="caption">My choice of distribution is the right-skewed discrete one (most attempts score low, a full 10 is rare), because a skewed, non-normal
+distribution is the realistic case and makes the effects of small n visible. The others can be selected for comparison. Each hacker's scores are fed to
+Welford's recurrences one at a time, so a single pass of 1,000 systems yields x̄ and s² at n = 2, 3, 5, …, 1,000 (prefixes of the same trajectory).</p>
+<p>What theory predicts, for i.i.d. scores:</p>
+<div class="formula-box">
+E[x̄] = μ                          Var(x̄) = σ²/n<br>
+E[SS] = (n − 1)σ²   because SS = Σ(xᵢ − μ)² − n(x̄ − μ)², so E[SS] = nσ² − n·σ²/n<br>
+E[s²] = E[SS/(n − 1)] = σ²         E[SS/n] = σ²(n − 1)/n   (biased low)<br>
+Var(s²) = μ₄/n − σ⁴(n − 3)/(n(n − 1)),   μ₄ = E[(X − μ)⁴]
+</div>
+<p>The n − 1 (Bessel's correction) appears because the deviations are measured from x̄, which is itself fitted to the same data and is therefore closer to
+the points than μ is: one “degree of freedom” is used up by estimating the mean.</p>
+
+<h2 id="compare">9. Averages across hackers vs μ and σ² <span class="tag req">required</span></h2>
+<div class="card">
+  <div class="table-wrap"><table id="cmp-table"></table></div>
+  <p class="caption">✓ = the average is within 3 standard errors of the theoretical value (Monte Carlo SE = theoretical SD / √m).</p>
+  <div class="grid2">
+    <div><div class="chart-title">Average of the sampling means vs μ</div><div id="mean-chart"></div></div>
+    <div><div class="chart-title">Average of the sampling variances vs σ²</div><div id="var-chart"></div></div>
+  </div>
+</div>
+<p><b>What the comparison shows.</b></p>
+<ul>
+<li>The average of the m sampling means equals μ within Monte Carlo error <b>for every n, even n = 2</b>: the sampling mean is an <b>unbiased</b> estimator of μ.</li>
+<li>The average of the sampling variances s² = SS/(n − 1) equals σ² within Monte Carlo error, again <b>for every n</b>: s² is unbiased for σ².</li>
+<li>Dividing by n instead gives an average of σ²(n − 1)/n: half of the true variance at n = 2, 10% too low at n = 10, a negligible difference at n = 1,000.
+The bias is a small-sample problem.</li>
+<li>The average of the sampling <i>standard deviations</i> s stays below σ for small n: an unbiased s² does not give an unbiased s, because the square root
+is concave (Jensen's inequality: E[√s²] ≤ √E[s²]).</li>
+<li>Agreement holds <i>on average across hackers</i>, not for each hacker: a single hacker's x̄ or s² can be far from μ or σ² (§10). Unbiasedness is a property
+of the procedure, observed over many repetitions.</li>
+</ul>
+
+<h2 id="spread">10. Effect of the number of systems n on the variability <span class="tag req">required</span></h2>
+<div class="card">
+  <div id="spread-chart" class="single-chart"></div>
+  <p class="caption" id="spread-note"></p>
+  <div id="hist-grid"></div>
+  <div class="controls"><label>Systems shown
+    <select id="traj-k"><option value="20">20</option><option value="100" selected>100</option><option value="1000">1,000</option></select></label></div>
+  <div class="chart-title">Running sampling mean of 30 hackers (band: μ ± 2σ/√k)</div><div id="traj-mean"></div>
+  <div class="chart-title">Running sampling variance of the same hackers (band: σ² ± 2√Var(s²), from k = 2)</div><div id="traj-var"></div>
+</div>
+<p><b>Reading.</b></p>
+<ul>
+<li>Increasing n does <b>not</b> change where the estimates are centred (they are unbiased at every n); it <b>narrows</b> their spread. On the log–log chart
+both variances fall with slope −1: Var(x̄) = σ²/n exactly, Var(s²) ≈ (μ₄ − σ⁴)/n. Their standard deviations shrink like 1/√n, so to halve the
+uncertainty a hacker must attempt four times as many systems. This is <b>consistency</b>: the estimates converge to μ and σ² (LLN, HW3).</li>
+<li>In relative terms the sampling variance is usually the noisier estimate: its relative standard deviation is ≈ √((κ − 1)/n), where κ = μ₄/σ⁴ is the
+kurtosis, so heavy-tailed score distributions make the variance hard to estimate even when the mean is easy.</li>
+<li>For small n the distribution of s² is strongly <b>right-skewed</b>: most hackers get s² <i>below</i> σ² and a few get very large values, which keep the average
+right. The distribution of x̄ becomes normal quickly (CLT); that of s² needs much larger n.</li>
+<li>m plays a different role: it does not change any hacker's variability; it only makes the averages across hackers more precise (SE ∝ 1/√m).</li>
+</ul>
+
+<h2 id="inference">11. Why these results matter for inferential statistics <span class="tag req">required</span></h2>
+<p>In practice we observe <b>one</b> sample, not m of them. The experiment shows what happens over all the samples we could have observed, which is
+exactly what inference relies on:</p>
+<ul>
+<li><b>Unbiased estimators.</b> x̄ and s² are right on average, so they are the natural point estimates of μ and σ², whatever the (unknown) distribution.</li>
+<li><b>Standard errors.</b> Var(x̄) = σ²/n tells us how far a single x̄ is likely to be from μ; replacing σ² by its unbiased estimate s² gives the standard
+error s/√n, computable from the sample alone.</li>
+<li><b>Confidence intervals and tests.</b> Combining the CLT (x̄ approximately normal) with s gives x̄ ± t·s/√n and the t statistic (x̄ − μ₀)/(s/√n).
+Both depend on the two facts verified here.</li>
+<li><b>Pooling.</b> The average of the hackers' s² is the pooled variance estimate used when several groups share the same σ² (e.g. in ANOVA).</li>
+<li><b>Sample-size planning.</b> Because uncertainty falls like 1/√n, one can choose n in advance to reach a target precision.</li>
+</ul>
+
+<h2 id="security">12. Security reading <span class="tag ours">extension</span></h2>
+<ul>
+<li><b>Ranking attackers or red teams.</b> A hacker's mean score over a few systems is a poor measure of skill: with n = 5, x̄ has standard deviation σ/√5 —
+here more than one score point — so rankings based on few attempts mostly reflect luck.</li>
+<li><b>Behavioural baselines.</b> User and entity behaviour analytics (UEBA) and SIEM rules keep, for each user or host, a running mean and variance of
+some activity (logons per hour, data volume) and raise an alert when z = (x − x̄)/s is large. Welford is how such baselines are maintained on streams,
+without storing raw events — also a data-minimisation benefit. Section 10 shows the risk: with a short history s² is often <i>under</i>estimated, so z is
+inflated and new accounts generate false positives. A sensible rule is to raise thresholds or suppress alerts until enough observations exist.</li>
+<li><b>Heavy tails.</b> When rare extreme values exist (μ₄ large), variance estimates converge slowly and a single outlier can move them: robust alternatives
+(median, MAD) are often preferred for detection baselines.</li>
+<li><b>Limits.</b> As in HW3, the results assume i.i.d. scores; real attackers learn from previous systems, which makes scores dependent and the
+effective sample size smaller than n.</li>
+</ul>
+
+<h2 id="conclusions">13. Conclusions</h2>
+<ol>
+<li>Welford's recurrence SSₖ = SSₖ₋₁ + (xₖ − Mₖ₋₁)(xₖ − Mₖ) follows from Knuth's recurrence for the mean with a few lines of algebra and needs only three lines
+of code; it is single-pass, constant-memory and numerically stable, unlike Σx² − (Σx)²/n.</li>
+<li>Across m hackers, the average sampling mean matches μ and the average sampling variance (denominator n − 1) matches σ² for every n: both estimators are unbiased.
+Dividing by n underestimates σ² by the factor (n − 1)/n.</li>
+<li>Increasing n leaves the centre unchanged and shrinks the spread like 1/√n; the variance estimate is noisier than the mean and skewed for small n.</li>
+<li>These are the foundations of standard errors, confidence intervals and tests — and, in security monitoring, of baselines that are only as reliable as the
+history behind them.</li>
+</ol>
+
+<!-- ======================================================================= -->
+<h2 id="refs">References</h2>
+<ul style="font-size:.9rem">
+<li>B. P. Welford, <i>Note on a method for calculating corrected sums of squares and products</i>, Technometrics 4(3), 1962.</li>
+<li>D. E. Knuth, <i>The Art of Computer Programming</i>, Vol. 2: Seminumerical Algorithms, 3rd ed., §4.2.2, Addison-Wesley, 1997.</li>
+<li>T. F. Chan, G. H. Golub, R. J. LeVeque, <i>Algorithms for computing the sample variance: analysis and recommendations</i>, The American Statistician 37(3), 1983.</li>
+<li>N. J. Higham, <i>Accuracy and Stability of Numerical Algorithms</i>, 2nd ed., SIAM, 2002 — catastrophic cancellation.</li>
+<li>G. Casella, R. L. Berger, <i>Statistical Inference</i>, 2nd ed., Duxbury, 2002 — unbiasedness, Var(s²), sampling distributions.</li>
+</ul>
+
+<footer>
+  Source: <a href="js/welford.js">welford.js</a> · <a href="js/dist.js">dist.js</a> · <a href="js/sim.js">sim.js</a> · <a href="js/app.js">app.js</a>
+  (+ HW3 <a href="../hw3/js/rng.js">rng.js</a>, <a href="../hw3/js/charts4.js">charts4.js</a>). Everything runs in your browser.<br>
+  Developed with the support of an AI assistant (Claude) used as a tutor; design choices, results and interpretations were reviewed and discussed by the author.
+</footer>
+</div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

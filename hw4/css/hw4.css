@@ -1,0 +1,26 @@
+/* HW4-specific styles (earlier homeworks are frozen: shared CSS is not modified) */
+:root { --s1: #b4441f; --s2: #1f5fa8; --s3: #2e7d4f; --s4: #7a4cc2; --s5: #a8761f; --s6: #1f7a8c; }
+@media (prefers-color-scheme: dark) {
+  :root { --s1: #f08a5d; --s2: #6aa8f0; --s3: #6cc995; --s4: #b393ee; --s5: #e0b45c; --s6: #5fc4d6; }
+}
+.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: .8rem; color: var(--muted); margin: 4px 0 0 58px; }
+.legend i { display: inline-block; width: 22px; height: 0; vertical-align: middle; margin-right: 6px; }
+.dist-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+@media (max-width: 760px) { .dist-row { grid-template-columns: 1fr; } .legend { margin-left: 0; } }
+.dist-row .caption { font-size: .75rem; margin: 0; }
+.muted { color: var(--muted); }
+.single-chart { max-width: 700px; }
+td.wrap-ok { white-space: normal; }
+.formula-box { font-family: var(--mono); font-size: .9rem; background: var(--code-bg); border-radius: 8px; padding: 12px 16px; line-height: 1.9; overflow-x: auto; margin: 10px 0; }
+.formula-box .lbl { color: var(--muted); font-family: var(--sans); font-size: .8rem; }
+.key { border-left: 4px solid var(--accent-3); }
+pre.code { font-size: .9rem; line-height: 1.6; }
+pre.code .core { background: color-mix(in srgb, var(--accent-3) 18%, transparent); display: inline-block; width: 100%; }
+#ex-table td, #ex-table th { font-family: var(--mono); font-size: .82rem; }
+.part-banner { margin: 56px 0 8px; padding: 18px 20px; border-radius: 12px; background: var(--surface);
+  border: 1px solid var(--border); border-left: 6px solid var(--accent); box-shadow: var(--shadow); }
+#part2.part-banner { border-left-color: var(--accent-2); }
+.part-banner .part-label { font-size: .75rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.part-banner h2.part-title { border: 0; margin: .2em 0 .3em; padding: 0; font-size: clamp(1.4rem, 3.5vw, 1.9rem); }
+.part-banner .caption { margin: 0; }
+nav.toc .toc-part { flex-basis: 100%; font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; color: var(--text); }
