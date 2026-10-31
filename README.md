@@ -5,9 +5,10 @@ published with GitHub Pages.
 
 | # | Topic | Page |
 |---|-------|------|
-| 1 | Private key → public key on a toy elliptic curve (secp256k1-style), statistical properties, blockchains | [`hw1/`](hw1/) |
-| 2 | From wallet seed to Ethereum address: BIP-39/32/44, secp256k1, Keccak-256, EIP-55, statistical properties | [`hw2/`](hw2/) |
-| 3 | Toy EC-ElGamal on secp256k1 vs Caesar cipher: statistical cryptanalysis and key-space attacks | [`hw3/`](hw3/) |
+| 1 | Part 1: private key → public key on a toy elliptic curve (secp256k1-style), statistical properties, blockchains. Part 2: from wallet seed to Ethereum address (BIP-39/32/44, secp256k1, Keccak-256, EIP-55) | [`hw1/`](hw1/) |
+| 2 | Toy EC-ElGamal on secp256k1 vs Caesar cipher: statistical cryptanalysis and key-space attacks | [`hw2/`](hw2/) |
+
+`hw3/` only redirects to `hw2/` (old link, before HW1 and HW2 were merged).
 
 ## Structure
 
