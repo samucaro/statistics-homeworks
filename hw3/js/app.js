@@ -1,408 +1,266 @@
 // =============================================================================
-// app.js — HW3 page logic
+// app.js — HW3 page logic: simulate, then render every section
 // =============================================================================
 
-import * as T from "./toyecc.js";
-import * as CZ from "./caesar.js";
-import * as X from "./cryptanalysis.js";
-import * as A from "./attack.js";
-import * as V from "./weakvariant.js";
-import * as ST from "../../hw1/js/stats.js";
-import { barChart } from "../../hw1/js/charts.js";
-import { lineChart } from "./charts3.js";
-import { scalarMult, eq } from "../../hw1/js/ec.js";
+import * as T from "./theory.js";
+import { simulate, coverage, CHECKPOINTS, N_MAX } from "./sim.js";
+import { lineChart, histogram, trajectories } from "./charts4.js";
 
 const $ = (id) => document.getElementById(id);
-const pause = () => new Promise((r) => setTimeout(r, 0));
-const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-const shortHex = (h, a = 12, b = 8) => (h.length > a + b + 1 ? `${h.slice(0, a)}…${h.slice(-b)}` : h);
-const hex64 = (v) => v.toString(16).padStart(64, "0");
-const stripHeader = (t) => t.split("\n").filter((l) => !l.startsWith("#")).join("\n");
-const SERIES = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)", "var(--s6)"];
+const C = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)", "var(--s6)"];
+const N_SHOW = [10, 100, 1000, 10000];
+const Q = [
+  { id: "S", name: "Total score Sₙ", f: (s, n) => s, scale: () => 1 },
+  { id: "avg", name: "Average score Sₙ/n", f: (s, n) => s / n, scale: (n) => 1 / n },
+  { id: "norm", name: "Normalised score Sₙ/√n", f: (s, n) => s / Math.sqrt(n), scale: (n) => 1 / Math.sqrt(n) },
+];
+const mean = (a) => { let s = 0; for (const v of a) s += v; return s / a.length; };
+const variance = (a) => { const mu = mean(a); let s = 0; for (const v of a) s += (v - mu) ** 2; return s / (a.length - 1); };
+const fmt = (v, d = 3) => {
+  const a = Math.abs(v);
+  if (v === 0) return "0";
+  if (a >= 1e5 || a < 1e-3) return v.toExponential(2);
+  if (a >= 100) return v.toFixed(1);
+  return v.toFixed(d);
+};
+const powTicks = (a, b) => { const t = []; for (let e = a; e <= b; e++) t.push(10 ** e); return t; };
+const sup = (e) => String(e).replace(/-/g, "⁻").replace(/\d/g, (d) => "⁰¹²³⁴⁵⁶⁷⁸⁹"[d]);
+const pow10Fmt = (v) => { const e = Math.round(Math.log10(v)); return Math.abs(Math.log10(v) - e) < 1e-9 ? (e === 0 ? "1" : e === 1 ? "10" : `10${sup(e)}`) : +v.toPrecision(2); };
 
-/** Human-readable duration. */
-function fmtDur(s) {
-  if (!isFinite(s)) return "∞";
-  if (s < 1e-6) return "< 1 µs";
-  if (s < 1e-3) return `${(s * 1e6).toFixed(0)} µs`;
-  if (s < 1) return `${(s * 1e3).toFixed(0)} ms`;
-  if (s < 120) return `${s.toFixed(1)} s`;
-  if (s < 7200) return `${(s / 60).toFixed(0)} min`;
-  if (s < 2 * 86400) return `${(s / 3600).toFixed(1)} h`;
-  const y = s / 3.156e7;
-  if (y < 1) return `${(s / 86400).toFixed(0)} days`;
-  if (y < 1e4) return `${y.toFixed(y < 10 ? 1 : 0)} years`;
-  const u = y / 1.38e10;
-  return `${y.toExponential(1)} years${u > 1 ? ` (≈ ${u.toExponential(1)} × age of the universe)` : ""}`;
-}
-const pow2 = (e) => `2<sup>${e}</sup>`;
+let R = null, M = null;
 
-// Shared state
-const state = { keys: null, cipher: null, message: "", model: null, corpora: {}, rate: null, caesarKey: 3 };
-
-// =============================================================================
-// §1 Toy ECC scheme
-// =============================================================================
-function eccKeyGen() {
-  const bits = +$("ecc-bits").value;
-  state.keys = T.keyGen(bits);
-  const { d, Q } = state.keys;
-  $("ecc-keys").innerHTML = `
-    <table><tbody>
-    <tr><th class="secret">private key d</th><td class="hex"><b>${d}</b> &nbsp;(hex ${d.toString(16)}) — chosen uniformly in [1, 2<sup>${bits}</sup>): only ${(2 ** bits - 1).toLocaleString("en")} possible values</td></tr>
-    <tr><th class="public">public key Q = d·G</th><td class="hex">${T.pointToHex(Q)}<br><span class="caption">compressed form: 02/03 (parity of y) ‖ x — a full-size, random-looking point despite the tiny d</span></td></tr>
-    </tbody></table>`;
-  eccEncrypt();
-}
-
-function eccEncrypt() {
-  if (!state.keys) return;
-  state.message = $("ecc-msg").value;
+// -----------------------------------------------------------------------------
+// Run
+// -----------------------------------------------------------------------------
+async function run() {
+  const model = $("model").value;
+  let p = parseFloat($("p").value);
+  if (!(p > 0 && p < 1)) { p = 0.2; $("p").value = p; }
+  $("p").disabled = model === "rademacher";
+  const m = +$("m").value, seed = parseInt($("seed").value, 10) || 1;
+  M = T.stepModel(model, p);
+  $("run").disabled = true;
   const t0 = performance.now();
-  state.cipher = T.encrypt(state.message, state.keys.Q);
-  const ms = performance.now() - t0;
-  const bytes = new TextEncoder().encode(state.message).length;
-  const rows = state.cipher.map((b, i) => `
-    <tr><td>${i + 1}</td>
-      <td class="hex">${shortHex(hex64(b.M.x))}</td>
-      <td class="hex secret">${shortHex(hex64(b.secret.r))}</td>
-      <td class="hex secret">${shortHex(T.pointToHex(b.secret.S))}</td>
-      <td class="hex public">${shortHex(T.pointToHex(b.R))}</td>
-      <td class="hex public">${shortHex(T.pointToHex(b.C))}</td></tr>`).join("");
-  $("ecc-enc").innerHTML = `
-    <div class="table-wrap"><table>
-      <thead><tr><th>block</th><th>M (x, encoded message)</th><th class="secret">r (Alice, secret)</th><th class="secret">S = r·Q (never sent)</th><th class="public">R = r·G (sent)</th><th class="public">C = M + S (sent)</th></tr></thead>
-      <tbody>${rows}</tbody></table></div>
-    <p class="caption">${bytes} bytes of UTF-8 → ${state.cipher.length} block(s) of ≤ ${T.BLOCK_BYTES} bytes → ciphertext of ${state.cipher.length * 66} bytes (two 33-byte points per block). Encrypted in ${ms.toFixed(0)} ms.</p>
-    <details><summary>Ciphertext as transmitted (what Eve intercepts)</summary>
-      <div class="hex">${state.cipher.map((b) => `(${T.pointToHex(b.R)}, ${T.pointToHex(b.C)})`).join("<br>")}</div></details>`;
-  eccDecrypt();
+  R = await simulate({ model, p, m, seed, onProgress: (f) => { $("progress").style.width = `${f * 100}%`; } });
+  $("run-info").innerHTML = `${m.toLocaleString("en")} attackers × ${N_MAX.toLocaleString("en")} steps = ${(m * N_MAX / 1e6).toFixed(0)} million increments,
+    simulated in ${((performance.now() - t0) / 1000).toFixed(1)} s (seed ${seed}). Step distribution: ${model === "rademacher" ? "Rademacher, μ = 0, σ² = 1" : `Bernoulli(p = ${p}), μ = ${p}, σ² = ${fmt(M.s2, 4)}`}.`;
+  renderAll();
+  $("run").disabled = false;
 }
 
-function eccDecrypt() {
-  if (!state.cipher) return;
-  try {
-    const b = state.cipher[0];
-    const { S } = T.decryptBlock(b, state.keys.d);
-    const text = T.decrypt(state.cipher, state.keys.d);
-    $("ecc-dec").innerHTML = `
-      <p>Bob computes S = d·R = <span class="hex">${shortHex(T.pointToHex(S))}</span>
-      — equal to Alice's S: <b class="${eq(S, b.secret.S) ? "ok" : "bad"}">${eq(S, b.secret.S)}</b> (block 1), then M = C − S and decodes:</p>
-      <div class="big-text">${esc(text)}</div>
-      <p class="caption">Round trip correct: <b class="${text === state.message ? "ok" : "bad"}">${text === state.message}</b></p>`;
-  } catch (e) { $("ecc-dec").innerHTML = `<p class="bad">${e.message}</p>`; }
-  updateAttackInfo();
+function renderAll() {
+  renderTrajectories();
+  renderDistributions();
+  renderVariance();
+  renderLLN();
+  renderCLT();
+  renderAttackers();
 }
 
-// =============================================================================
-// §2 Caesar
-// =============================================================================
-function caesarRun() {
-  let k = parseInt($("cz-key").value, 10);
-  if (!(k >= 0 && k <= 25)) { k = ((k % 26) + 26) % 26 || 0; $("cz-key").value = k; }
-  state.caesarKey = k;
-  const msg = $("ecc-msg").value;
-  const c = CZ.encrypt(msg, k), back = CZ.decrypt(c, k);
-  $("cz-out").innerHTML = `
-    <div class="table-wrap"><table class="alpha"><tr><td>plain</td>${CZ.LETTERS.map((l) => `<td>${l}</td>`).join("")}</tr>
-    <tr><td>cipher</td>${CZ.LETTERS.map((_, i) => `<td><b>${CZ.LETTERS[(i + k) % 26]}</b></td>`).join("")}</tr></table></div>
-    <div class="table-wrap"><table><tbody>
-      <tr><th>plaintext</th><td class="wrap-ok"><div class="big-text">${esc(msg)}</div></td></tr>
-      <tr><th>ciphertext (k = ${k})</th><td class="wrap-ok"><div class="big-text">${esc(c)}</div></td></tr>
-      <tr><th>decrypted (k = ${k})</th><td class="wrap-ok"><div class="big-text">${esc(back)}</div></td></tr>
-    </tbody></table></div>
-    <p class="caption">Same length as the plaintext; spaces and punctuation unchanged; round trip correct:
-    <b class="${back === msg ? "ok" : "bad"}">${back === msg}</b>.</p>`;
-  if (!$("ca-input").dataset.touched) $("ca-input").value = CZ.encrypt(DEFAULT_ATTACK_TEXT, k);
+// -----------------------------------------------------------------------------
+// §2 Trajectories
+// -----------------------------------------------------------------------------
+function renderTrajectories() {
+  const K = +$("traj-k").value, sd = Math.sqrt(M.s2), mu = M.mu;
+  const paths = R.paths;
+  // Sₖ
+  const sLo = Math.min(0, mu * K - 3.2 * sd * Math.sqrt(K)), sHi = mu * K + 3.2 * sd * Math.sqrt(K);
+  trajectories($("traj-S"), paths, K, { f: (k, s) => s, yMin: sLo, yMax: sHi, yTicks: niceTicks(sLo, sHi),
+    centre: (k) => mu * k, band: [(k) => mu * k - 2 * sd * Math.sqrt(k), (k) => mu * k + 2 * sd * Math.sqrt(k)], yTitle: "Sₖ" });
+  // Sₖ/k
+  const aLo = M.model === "rademacher" ? -1 : 0, aHi = 1;
+  trajectories($("traj-avg"), paths, K, { f: (k, s) => s / k, yMin: aLo, yMax: aHi, yTicks: niceTicks(aLo, aHi),
+    centre: () => mu, band: [(k) => mu - 2 * sd / Math.sqrt(k), (k) => mu + 2 * sd / Math.sqrt(k)], yTitle: "Sₖ / k" });
+  // Sₖ/√k
+  const nLo = Math.min(-3.5 * sd, mu * Math.sqrt(K) - 3.5 * sd), nHi = mu * Math.sqrt(K) + 3.5 * sd;
+  trajectories($("traj-norm"), paths, K, { f: (k, s) => s / Math.sqrt(k), yMin: nLo, yMax: nHi, yTicks: niceTicks(nLo, nHi),
+    centre: (k) => mu * Math.sqrt(k), band: [(k) => mu * Math.sqrt(k) - 2 * sd, (k) => mu * Math.sqrt(k) + 2 * sd], yTitle: "Sₖ / √k" });
 }
 
-// =============================================================================
-// §3 Comparison: statistical properties of the ciphertexts
-// =============================================================================
-async function compareRun() {
-  const btn = $("cmp-run"); btn.disabled = true;
-  const text = stripHeader(state.corpora.test).slice(1200, 2400).replace(/\s+/g, " ");
-  const k = state.caesarKey || 3;
-  const cP = CZ.letterCounts(text), cC = CZ.letterCounts(CZ.encrypt(text, k));
-  barChart($("cmp-plain"), cP, { labels: CZ.LETTERS, xLabelEvery: 1, color: "var(--s2)", xTitle: "plaintext letters" });
-  barChart($("cmp-caesar"), cC, { labels: CZ.LETTERS, xLabelEvery: 1, color: "var(--s1)", xTitle: `Caesar ciphertext letters (k = ${k})` });
-  $("cmp-ecc").innerHTML = `<p class="caption">Encrypting ${text.length} characters with EC-ElGamal…</p>`;
-  await pause();
-  const blocks = [];
-  const Ms = T.encodeMessage(text);
-  for (let i = 0; i < Ms.length; i++) { blocks.push(T.encryptBlock(Ms[i], state.keys.Q)); if (i % 4 === 3) await pause(); }
-  const bytes = [];
-  for (const b of blocks) for (const P of [b.R, b.C]) { let x = P.x; for (let j = 0; j < 32; j++) { bytes.push(Number(x & 0xffn)); x >>= 8n; } }
-  const hist = new Array(16).fill(0); bytes.forEach((v) => hist[v >> 4]++);
-  const chi = ST.chiSquareUniform(hist);
-  const counts256 = new Array(256).fill(0); bytes.forEach((v) => counts256[v]++);
-  barChart($("cmp-ecc"), hist, { labels: [..."0123456789abcdef"].map((h) => h + "x"), xLabelEvery: 1, refLine: bytes.length / 16, color: "var(--s3)", xTitle: "EC ciphertext bytes (16 bins by high nibble)" });
-  $("cmp-stats").innerHTML = `
-    <div class="stat"><div class="v">${CZ.indexOfCoincidence(cP).toFixed(4)}</div><div class="l">IC plaintext letters</div></div>
-    <div class="stat"><div class="v">${CZ.indexOfCoincidence(cC).toFixed(4)}</div><div class="l">IC Caesar ciphertext (identical)</div></div>
-    <div class="stat"><div class="v">${CZ.indexOfCoincidence(counts256).toFixed(4)}</div><div class="l">IC of EC ciphertext bytes (uniform = 1/256 = 0.0039)</div></div>
-    <div class="stat"><div class="v">${chi.pValue.toFixed(3)}</div><div class="l">χ² p-value, EC bytes uniform (df 15)</div></div>
-    <div class="stat"><div class="v">× ${((blocks.length * 66) / new TextEncoder().encode(text).length).toFixed(2)}</div><div class="l">EC ciphertext / plaintext size (Caesar × 1)</div></div>`;
-  // Determinism
-  const w = "HELLO";
-  const e1 = T.encrypt(w, state.keys.Q)[0], e2 = T.encrypt(w, state.keys.Q)[0];
-  $("cmp-twice").innerHTML = `<table><thead><tr><th>Encrypt "${w}" twice</th><th>Caesar (k = ${k})</th><th>EC-ElGamal: C (and R)</th></tr></thead><tbody>
-    <tr><td>1st time</td><td class="mono">${CZ.encrypt(w, k)}</td><td class="hex">${shortHex(T.pointToHex(e1.C), 16, 8)}</td></tr>
-    <tr><td>2nd time</td><td class="mono">${CZ.encrypt(w, k)}</td><td class="hex">${shortHex(T.pointToHex(e2.C), 16, 8)}</td></tr>
-    <tr><td>Equal?</td><td><b class="bad">yes — deterministic</b></td><td><b class="ok">${T.pointToHex(e1.C) === T.pointToHex(e2.C) ? "yes" : "no — randomised by r"}</b></td></tr></tbody></table>`;
-  btn.disabled = false;
+function niceTicks(a, b) {
+  const span = b - a, raw = span / 4, mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((x) => x * mag).find((x) => x >= raw);
+  const out = [];
+  for (let t = Math.ceil(a / step) * step; t <= b + 1e-9; t += step) out.push(+t.toPrecision(10));
+  return out;
 }
 
-// =============================================================================
-// §4 Statistical cryptanalysis of Caesar
-// =============================================================================
-const DEFAULT_ATTACK_TEXT = "The Caesar cipher replaces each letter with the letter three places further down the alphabet.";
-
-function renderModel() {
-  const M = state.model, H = M.entropy;
-  barChart($("lm-chart"), M.p, { labels: CZ.LETTERS, xLabelEvery: 1, color: "var(--s2)", yFmt: (v) => v.toFixed(2), xTitle: "letter frequency in the training corpus" });
-  const order = M.p.map((v, i) => [v, CZ.LETTERS[i]]).sort((a, b) => b[0] - a[0]).map(([, l]) => l).join("");
-  $("lm-stats").innerHTML = `
-    <div class="stat"><div class="v">${M.N.toLocaleString("en")}</div><div class="l">letters in the corpus</div></div>
-    <div class="stat"><div class="v">${M.nWords.toLocaleString("en")}</div><div class="l">distinct words (dictionary)</div></div>
-    <div class="stat"><div class="v mono" style="font-size:.85rem">${order.slice(0, 12)}…</div><div class="l">letters by frequency</div></div>
-    <div class="stat"><div class="v">${CZ.indexOfCoincidence(M.counts).toFixed(4)}</div><div class="l">index of coincidence</div></div>
-    <div class="stat"><div class="v">${deltaMin().d.toFixed(2)} (t = ${deltaMin().t})</div><div class="l">Δ<sub>min</sub>: closest wrong shift, χ² gap per letter</div></div>`;
-  $("lm-entropy").innerHTML = `
-    <thead><tr><th>Model</th><th>Entropy H (bits/letter)</th><th>Redundancy D = log₂26 − H</th><th>Unicity distance U = log₂26 / D</th></tr></thead><tbody>
-    <tr><td>No knowledge (uniform)</td><td>${H.H0.toFixed(3)}</td><td>0</td><td>∞ (cannot be broken)</td></tr>
-    <tr><td>Letter frequencies (unigram)</td><td>${H.H1.toFixed(3)}</td><td>${(H.H0 - H.H1).toFixed(3)}</td><td><b>${X.unicity(H.H1).toFixed(1)} letters</b></td></tr>
-    <tr><td>Bigrams: H(Xₜ | Xₜ₋₁)</td><td>${H.H2.toFixed(3)}</td><td>${(H.H0 - H.H2).toFixed(3)}</td><td><b>${X.unicity(H.H2).toFixed(1)} letters</b></td></tr>
-    <tr><td>Trigrams: H(Xₜ | Xₜ₋₂Xₜ₋₁)</td><td>${H.H3.toFixed(3)}</td><td>${(H.H0 - H.H3).toFixed(3)}</td><td><b>${X.unicity(H.H3).toFixed(1)} letters</b></td></tr></tbody>`;
+// -----------------------------------------------------------------------------
+// §3 Distributions: same x-axis for every n, so drift / spread / concentration show
+// -----------------------------------------------------------------------------
+function latticeEdges(qi, n, x0, x1, targetBins) {
+  const q = Q[qi], h = M.step * q.scale(n);              // spacing of the possible values
+  const offset = q.f(M.model === "rademacher" ? -n : 0, n); // one possible value
+  const w = h * Math.max(1, Math.ceil((x1 - x0) / targetBins / h));
+  let start = offset - h / 2;
+  start += Math.floor((x0 - start) / w) * w;
+  const edges = [];
+  for (let e = start; e < x1 + w; e += w) edges.push(e);
+  return edges;
 }
 
-/**
- * How different is the language distribution p from itself rotated by t?
- * Δ_t = Σᵢ (p_{i+t} − pᵢ)² / pᵢ is the expected χ² increase PER LETTER when
- * decrypting with a key that is wrong by t. The right key gives χ² ≈ df = 25
- * whatever the length; a wrong key gives ≈ 25 + L·Δ_t: the gap grows with L.
- */
-function deltaMin() {
-  const p = state.model.p;
-  let best = { t: 0, d: Infinity };
-  for (let t = 1; t < 26; t++) {
-    let s = 0;
-    for (let i = 0; i < 26; i++) s += (p[(i + t) % 26] - p[i]) ** 2 / p[i];
-    if (s < best.d) best = { t, d: s };
-  }
-  return best;
-}
-
-function attackCaesar() {
-  const ct = $("ca-input").value;
-  const prep = X.prepare(ct);
-  if (!prep.L) { $("ca-out").innerHTML = `<p class="bad">No letters in the ciphertext.</p>`; return; }
-  const method = $("ca-method").value;
-  const results = X.METHODS.map((m) => {
-    const scores = X.scoreShifts(prep, m.id, state.model);
-    return { m, scores, ...X.bestKey(scores) };
+function renderDistributions() {
+  const grid = $("dist-grid");
+  grid.innerHTML = "";
+  Q.forEach((q, qi) => {
+    // shared range: union of mean ± 4.5 sd over the shown n, clipped to the support
+    let x0 = Infinity, x1 = -Infinity;
+    for (const n of N_SHOW) {
+      const mo = T.quantityMoments(M, n)[q.id], sd = Math.sqrt(mo.var);
+      const lo = q.f(M.model === "rademacher" ? -n : 0, n), hi = q.f(n, n);
+      x0 = Math.min(x0, Math.max(lo, mo.mean - 4.5 * sd));
+      x1 = Math.max(x1, Math.min(hi, mo.mean + 4.5 * sd));
+    }
+    const row = document.createElement("div");
+    row.innerHTML = `<div class="chart-title">${q.name} — same horizontal axis for every n</div><div class="dist-row"></div>`;
+    grid.appendChild(row);
+    const cells = row.querySelector(".dist-row");
+    for (const n of N_SHOW) {
+      const cell = document.createElement("div");
+      cells.appendChild(cell);
+      const vals = Array.from(R.S[n], (s) => q.f(s, n));
+      const mo = T.quantityMoments(M, n)[q.id], sd = Math.sqrt(mo.var);
+      histogram(cell, vals, { edges: latticeEdges(qi, n, x0, x1, 60), title: `n = ${n.toLocaleString("en")}`, color: C[qi + 1],
+        curve: (x) => Math.exp(-0.5 * ((x - mo.mean) / sd) ** 2) / (sd * Math.sqrt(2 * Math.PI)), xTicks: niceTicks(x0, x1).filter((_, i, a) => a.length <= 4 || i % 2 === 0) });
+      const cap = document.createElement("p");
+      cap.className = "caption";
+      cap.innerHTML = `mean ${fmt(mean(vals))} (th. ${fmt(mo.mean)}) · var ${fmt(variance(vals))} (th. ${fmt(mo.var)})`;
+      cell.appendChild(cap);
+    }
   });
-  const sel = results.find((r) => r.m.id === method);
-  const vals = method === "chi2" ? sel.scores.map((v) => -v) : sel.scores.map((v) => v - Math.min(...sel.scores));
-  barChart($("ca-chart"), vals, { labels: [...Array(26).keys()], xLabelEvery: 1, color: "var(--s4)",
-    yFmt: (v) => (Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1)),
-    xTitle: method === "chi2" ? "candidate key s — χ² (LOWEST wins)" : "candidate key s — score above the worst shift (HIGHEST wins)" });
-  $("ca-out").innerHTML = `
-    <p class="caption">Ciphertext: ${prep.L} letters. Every method tries all 26 keys; they differ only in how a candidate plaintext is scored.</p>
-    <div class="table-wrap"><table><thead><tr><th>Method</th><th>Recovered key</th><th>Decryption with that key</th></tr></thead><tbody>
-    ${results.map((r) => `<tr><td>${r.m.name}${r.ties > 1 ? ` <span class="pill">tie among ${r.ties}</span>` : ""}</td><td class="mono">${r.key}</td>
-      <td class="wrap-ok mono" style="font-size:.85rem">${esc(CZ.decrypt(ct, r.key).slice(0, 110))}${ct.length > 110 ? "…" : ""}</td></tr>`).join("")}
-    </tbody></table></div>`;
 }
 
-const LENGTHS = [3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30, 40, 50, 75, 100, 150, 200, 300];
-async function experimentRun() {
-  const btn = $("exp-run"); btn.disabled = true;
-  const trials = +$("exp-trials").value;
-  const src = $("exp-source").value;
-  const res = await X.lengthExperiment(state.model, state.corpora[src], LENGTHS, trials, CZ.encrypt,
-    (f) => { $("exp-progress").style.width = `${f * 100}%`; });
-  lineChart($("exp-chart"), LENGTHS, X.METHODS.map((m, i) => ({ name: m.name, values: res[m.id], color: SERIES[i] })),
-    { xLog2: true, yMin: 0, yMax: 1, yTicks: [0, 0.25, 0.5, 0.75, 1], xTicks: [3, 5, 10, 20, 50, 100, 300],
-      yFmt: (v) => `${Math.round(v * 100)}%`, xTitle: "ciphertext length (letters, log scale)", yTitle: "key recovered" });
-  const ci = (p) => 1.96 * Math.sqrt((p * (1 - p)) / trials);
-  $("exp-table").innerHTML = `<thead><tr><th>letters</th>${X.METHODS.map((m) => `<th>${m.name}</th>`).join("")}</tr></thead><tbody>
-    ${LENGTHS.map((L, li) => { const best = Math.max(...X.METHODS.map((m) => res[m.id][li]));
-      return `<tr><td>${L}</td>${X.METHODS.map((m) => { const p = res[m.id][li]; return `<td class="${p === best ? "best" : ""}">${(p * 100).toFixed(0)}%</td>`; }).join("")}</tr>`; }).join("")}</tbody>`;
-  $("exp-note").textContent = `${trials} random excerpts per length (same ciphertexts for every method, random key 1–25). ` +
-    `95% margin of error: at most ±${(ci(0.5) * 100).toFixed(1)} percentage points (at 50%), smaller near 0% and 100%.`;
-  btn.disabled = false;
-}
-
-const LIPOGRAM = "A lipogram is a kind of writing that avoids a particular symbol. This paragraph is an illustration: in it you will not spot that glyph at all, which forms a curious constraint for any author who wants to try such a trick.";
-function lipogramDemo() {
-  const k = 11;
-  const ct = CZ.encrypt(LIPOGRAM, k);
-  const prep = X.prepare(ct);
-  const nE = (LIPOGRAM.match(/e/gi) || []).length;
-  $("lipo-out").innerHTML = `<div class="big-text" style="font-size:.88rem">${esc(LIPOGRAM)}</div>
-    <p class="caption">${prep.L} letters, of which “E”: ${nE}. Encrypted with k = ${k}.</p>
-    <div class="table-wrap"><table><thead><tr><th>Method</th><th>Recovered key</th><th>Correct?</th></tr></thead><tbody>
-    ${X.METHODS.map((m) => { const r = X.bestKey(X.scoreShifts(prep, m.id, state.model));
-      return `<tr><td>${m.name}</td><td class="mono">${r.key}</td><td class="${r.key === k ? "ok" : "bad"}">${r.key === k ? "yes" : "no"}</td></tr>`; }).join("")}
-    </tbody></table></div>`;
-}
-
-// =============================================================================
-// §5 Attacking the restricted private key
-// =============================================================================
-let stopFlag = false;
-
-function updateAttackInfo() {
-  if (!state.keys || !state.rate) return;
-  const b = state.keys.bits, K = 2 ** b;
-  $("atk-info").innerHTML = `Target: Bob's public key Q from §1, with d &lt; 2<sup>${b}</sup>. Measured speed on this device:
-    <b>${Math.round(state.rate).toLocaleString("en")}</b> point additions/s. Expected time: brute force ≈ ${fmtDur(K / 2 / state.rate)}
-    (worst case ${fmtDur(K / state.rate)}); baby-step giant-step ≈ ${fmtDur((1.5 * Math.sqrt(K)) / state.rate)}.`;
-}
-
-async function attackRun(kind) {
-  const { Q, bits } = state.keys;
-  const K = 1n << BigInt(bits);
-  const out = $("atk-out");
-  ["atk-brute", "atk-bsgs"].forEach((id) => ($(id).disabled = true));
-  $("atk-stop").disabled = kind !== "brute";
-  stopFlag = false;
-  out.innerHTML = `<p class="caption">Running ${kind === "brute" ? "brute force" : "baby-step giant-step"}…</p>`;
-  const prog = (f) => { $("atk-progress").style.width = `${Math.min(100, f * 100)}%`; };
-  const r = kind === "brute" ? await A.bruteForce(Q, K, prog, () => stopFlag) : await A.bsgs(Q, K, prog);
-  prog(1);
-  ["atk-brute", "atk-bsgs"].forEach((id) => ($(id).disabled = false));
-  $("atk-stop").disabled = true;
-  if (r.d === null) { out.innerHTML = `<p class="bad">${r.stopped ? `Stopped after ${r.steps.toLocaleString("en")} candidates.` : "Key not found."}</p>`; return; }
-  const verified = eq(scalarMult(r.d, T.CURVE.G, T.CURVE), Q);
-  let plain = "";
-  try { plain = T.decrypt(state.cipher.map(({ R, C }) => ({ R, C })), r.d); } catch (e) { plain = "(" + e.message + ")"; }
-  const ops = kind === "brute" ? `${r.steps.toLocaleString("en")} point additions` :
-    `${r.baby.toLocaleString("en")} baby steps + ${r.giant.toLocaleString("en")} giant steps (table of ${r.tableSize.toLocaleString("en")} points)`;
-  out.innerHTML = `
-    <div class="stat-row">
-      <div class="stat"><div class="v">${r.d}</div><div class="l">recovered private key d</div></div>
-      <div class="stat"><div class="v">${fmtDur(r.ms / 1000)}</div><div class="l">time</div></div>
-      <div class="stat"><div class="v ${verified ? "ok" : "bad"}">${verified ? "d·G = Q ✓" : "✗"}</div><div class="l">exact verification</div></div>
-    </div>
-    <p class="caption">Work: ${ops}.</p>
-    <p>Eve now decrypts the intercepted ciphertext of §1 using only public data and the recovered d (she uses R and C, not Alice's secrets):</p>
-    <div class="big-text">${esc(plain)}</div>`;
-}
-
-async function scalingRun() {
-  const btn = $("scale-run"); btn.disabled = true;
-  const bruteBits = [8, 10, 12, 14, 16], bsgsBits = [8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28];
-  const xs = bsgsBits;
-  const bruteMs = {}, bsgsMs = {};
-  let done = 0; const total = bruteBits.length + bsgsBits.length;
-  const prog = () => { $("scale-progress").style.width = `${(++done / total) * 100}%`; };
-  for (const b of bruteBits) {
-    const k = T.keyGen(b);
-    const r = await A.bruteForce(k.Q, 1n << BigInt(b));
-    bruteMs[b] = r.ms; prog();
+// -----------------------------------------------------------------------------
+// §4 Variance under the three normalisations
+// -----------------------------------------------------------------------------
+function renderVariance() {
+  const rows = [];
+  const series = [];
+  Q.forEach((q, i) => {
+    const emp = CHECKPOINTS.map((n) => [n, variance(Array.from(R.S[n], (s) => q.f(s, n)))]);
+    const th = CHECKPOINTS.map((n) => [n, T.quantityMoments(M, n)[q.id].var]);
+    series.push({ name: `Var(${q.id === "S" ? "Sₙ" : q.id === "avg" ? "Sₙ/n" : "Sₙ/√n"}) simulated`, color: C[i], pts: emp, dots: true, noLine: true });
+    series.push({ name: "", color: C[i], pts: th, dash: "5 4", width: 1.6 });
+  });
+  series.push({ name: "theory (dashed)", color: "var(--muted)", pts: [], dash: "5 4" });
+  const allV = series.flatMap((s) => s.pts.map(([, y]) => y));
+  const e0 = Math.floor(Math.log10(Math.min(...allV))), e1 = Math.ceil(Math.log10(Math.max(...allV)));
+  lineChart($("var-chart"), series, { xLog: true, yLog: true, xTicks: CHECKPOINTS, yTicks: powTicks(e0, e1), yFmt: pow10Fmt,
+    yMin: 10 ** e0, yMax: 10 ** e1, xTitle: "n (number of systems, log scale)", yTitle: "variance across attackers (log scale)" });
+  for (const n of CHECKPOINTS) {
+    const th = T.quantityMoments(M, n);
+    const cells = Q.map((q) => `<td>${fmt(variance(Array.from(R.S[n], (s) => q.f(s, n))))} <span class="muted">(${fmt(th[q.id].var)})</span></td>`).join("");
+    rows.push(`<tr><td>${n.toLocaleString("en")}</td>${cells}</tr>`);
   }
-  for (const b of bsgsBits) {
-    const k = T.keyGen(b);
-    const r = await A.bsgs(k.Q, 1n << BigInt(b));
-    bsgsMs[b] = r.ms; prog();
-  }
-  const rate = state.rate;
-  const expBrute = xs.map((b) => Math.log2(((2 ** b) / 2 / rate) * 1000));
-  const expBsgs = xs.map((b) => Math.log2(((1.5 * 2 ** (b / 2)) / rate) * 1000));
-  lineChart($("scale-chart"), xs, [
-    { name: "brute force, measured (random d)", values: xs.map((b) => (bruteMs[b] ? Math.log2(Math.max(bruteMs[b], 0.1)) : null)), color: "var(--s1)" },
-    { name: "brute force, expected 2^(b−1) additions", values: expBrute, color: "var(--s1)", dash: "5 4" },
-    { name: "BSGS, measured", values: xs.map((b) => Math.log2(Math.max(bsgsMs[b], 0.1))), color: "var(--s2)" },
-    { name: "BSGS, expected 1.5·2^(b/2) additions", values: expBsgs, color: "var(--s2)", dash: "5 4" },
-  ], { yMin: Math.log2(0.1), yMax: Math.log2(1e8), yTicks: [0.1, 1, 100, 1e4, 1e6, 1e8].map(Math.log2),
-    yFmt: (v) => fmtDur(2 ** v / 1000).replace(/\.0 /, " "),
-    xTicks: xs, xTitle: "private-key bits b (d < 2^b)", yTitle: "time (log scale)", marginLeft: 74 });
-  btn.disabled = false;
+  $("var-table").innerHTML = `<thead><tr><th>n</th><th>Var(Sₙ) sim. (theory nσ²)</th><th>Var(Sₙ/n) sim. (theory σ²/n)</th><th>Var(Sₙ/√n) sim. (theory σ²)</th></tr></thead><tbody>${rows.join("")}</tbody>`;
+  const se = Math.sqrt(2 / (R.m - 1));
+  $("var-note").textContent = `Each simulated variance comes from m = ${R.m} attackers, so it carries a relative Monte Carlo error of about ±${(200 * se).toFixed(1)}% (2·√(2/(m−1)), normal approximation).`;
 }
 
-function extrapolationTable() {
-  const rate = state.rate, big = 1e12;
-  const rows = [16, 20, 32, 48, 64, 80, 128, 256].map((b) => {
-    const brute = 2 ** (b - 1), bs = b === 256 ? 0.886 * 2 ** 128 : 1.5 * 2 ** (b / 2);
-    const mem = 2 ** (b / 2) * 40;
-    const units = [["kB", 1e3], ["MB", 1e6], ["GB", 1e9], ["TB", 1e12], ["PB", 1e15], ["EB", 1e18]];
-    let memStr = `${mem.toExponential(0)} bytes`;
-    for (const [u, v] of units) if (mem >= v && mem < v * 1000) memStr = `${(mem / v).toFixed(0)} ${u}`;
-    if (mem >= 1e21) memStr += " (more than all storage on Earth)";
-    return `<tr${b === 256 ? ' class="final"' : ""}><td>${b}${b === 256 ? " (full secp256k1)" : ""}</td>
-      <td>${fmtDur(brute / rate)}</td><td>${fmtDur(bs / rate)}</td><td>${fmtDur(bs / big)}</td><td>${memStr}</td></tr>`;
-  }).join("");
-  $("extra-table").innerHTML = `<thead><tr><th>key bits b</th><th>brute force, this browser</th><th>√ methods (BSGS / rho / kangaroo), this browser</th>
-    <th>√ methods at 10<sup>12</sup> additions/s (≈ 1000 GPUs, rough assumption)</th><th>BSGS table memory (rho/kangaroo: almost none)</th></tr></thead><tbody>${rows}</tbody>`;
+// -----------------------------------------------------------------------------
+// §5 Law of large numbers
+// -----------------------------------------------------------------------------
+function renderLLN() {
+  const eps = +$("lln-eps").value;
+  const emp = CHECKPOINTS.map((n) => { let c = 0; for (const s of R.S[n]) if (Math.abs(s / n - M.mu) >= eps - 1e-12) c++; return [n, c / R.m]; });
+  const nsDense = []; for (let e = 1; e <= 4.0001; e += 0.05) nsDense.push(Math.round(10 ** e));
+  const exact = CHECKPOINTS.map((n) => [n, T.exactTail(M, n, eps)]);
+  lineChart($("lln-chart"), [
+    { name: "simulated (m attackers)", color: C[1], pts: emp, dots: true },
+    { name: "exact (binomial law)", color: C[2], pts: exact, dots: false },
+    { name: "Chebyshev bound σ²/(nε²)", color: C[0], pts: nsDense.map((n) => [n, T.chebyshev(M, n, eps)]), dash: "6 4" },
+    { name: `Hoeffding bound 2e^(−2nε²/${M.range * M.range})`, color: C[3], pts: nsDense.map((n) => [n, T.hoeffding(M, n, eps)]), dash: "2 3" },
+  ], { xLog: true, yMin: 0, yMax: 1, xTicks: CHECKPOINTS, yTicks: [0, 0.25, 0.5, 0.75, 1], yFmt: (v) => `${Math.round(v * 100)}%`,
+    xTitle: "n (log scale)", yTitle: `P(|Sₙ/n − μ| ≥ ${eps})` });
+  $("lln-table").innerHTML = `<thead><tr><th>n</th>${CHECKPOINTS.map((n) => `<th>${n.toLocaleString("en")}</th>`).join("")}</tr></thead><tbody>
+    <tr><td>simulated</td>${emp.map(([, v]) => `<td>${(v * 100).toFixed(1)}%</td>`).join("")}</tr>
+    <tr><td>exact</td>${exact.map(([, v]) => `<td>${v < 1e-4 && v > 0 ? v.toExponential(1) : (v * 100).toFixed(1) + "%"}</td>`).join("")}</tr>
+    <tr><td>Chebyshev</td>${CHECKPOINTS.map((n) => `<td>${(T.chebyshev(M, n, eps) * 100).toFixed(1)}%</td>`).join("")}</tr>
+    <tr><td>Hoeffding</td>${CHECKPOINTS.map((n) => { const v = T.hoeffding(M, n, eps); return `<td>${v < 1e-4 ? v.toExponential(1) : (v * 100).toFixed(1) + "%"}</td>`; }).join("")}</tr></tbody>`;
 }
 
-// =============================================================================
-// §6 Design flaw demo
-// =============================================================================
-async function weakRun() {
-  const btn = $("weak-run"); btn.disabled = true;
-  const text = stripHeader(state.corpora.test).slice(4000, 5500).replace(/\s+/g, " ");
-  const k = T.keyGen(256);                         // FULL-size key on purpose
-  $("weak-out").innerHTML = `<p class="caption">Encrypting ${text.length} characters, one point each…</p>`;
-  const ct = await V.encryptPerChar(text, k.Q);
-  const fa = V.frequencyAttack(ct.C, stripHeader(state.corpora.train).replace(/\s+/g, " "));
-  let ok = 0;
-  const recon = [...text].map((ch, i) => { const g = fa.guess[i]; if (g === ch) ok++; return `<span class="${g === ch ? "h" : "m"}">${esc(g)}</span>`; }).join("");
-  const kp = V.knownPlaintextAttack(ct.C, text[0]);
-  const show = (ch) => (ch === " " ? "␣" : esc(ch));
-  const top = fa.symRank.slice(0, 8).map(([id, c], i) => `<tr><td>${i + 1}</td><td class="hex">${shortHex(id, 10, 6)}</td><td>${c}</td><td class="mono">${show(fa.corpusRank[i])}</td></tr>`).join("");
-  $("weak-out").innerHTML = `
-    <p>Private key: a <b>full 256-bit</b> d — the attack below does not touch it.
-    The ${text.length}-character message produced only <b>${fa.distinct}</b> distinct ciphertext points (one per distinct character).</p>
-    <div class="grid2">
-      <div><div class="chart-title">Most frequent ciphertext points</div><div class="table-wrap"><table><thead><tr><th>rank</th><th>point</th><th>count</th><th>guess (corpus rank)</th></tr></thead><tbody>${top}</tbody></table></div></div>
-      <div><div class="chart-title">1 · Ciphertext-only frequency attack</div>
-        <p><b>${((ok / text.length) * 100).toFixed(1)}%</b> of the characters guessed correctly just by matching frequency ranks
-        (green = right, red = wrong), with no key and no known plaintext.</p></div>
-    </div>
-    <div class="recon">${recon}</div>
-    <h4>2 · Known-plaintext attack: the attacker only knows that the message starts with “${esc(text[0])}”</h4>
-    <p>S = C₁ − Encode(“${esc(text[0])}”) → Mᵢ = Cᵢ − S for every i. Recovered text identical to the plaintext:
-      <b class="${kp.text === text ? "ok" : "bad"}">${kp.text === text}</b></p>
-    <div class="recon">${esc(kp.text.slice(0, 400))}…</div>`;
-  btn.disabled = false;
+// -----------------------------------------------------------------------------
+// §6 Central limit theorem
+// -----------------------------------------------------------------------------
+function renderCLT() {
+  const n = +$("clt-n").value, sd = Math.sqrt(M.s2);
+  const z = Array.from(R.S[n], (s) => (s - n * M.mu) / (sd * Math.sqrt(n)));
+  // lattice of Z: spacing step/(σ√n), one value at (lo·n − nμ)/(σ√n)
+  const h = M.step / (sd * Math.sqrt(n)), off = (M.lo * n - n * M.mu) / (sd * Math.sqrt(n));
+  const w = h * Math.max(1, Math.ceil(8 / 48 / h));
+  let start = off - h / 2; start += Math.floor((-4 - start) / w) * w;
+  const edges = []; for (let e = start; e < 4 + w; e += w) edges.push(e);
+  histogram($("clt-hist"), z, { edges, curve: T.normPdf, W: 620, H: 260, color: C[2], xTicks: [-4, -3, -2, -1, 0, 1, 2, 3, 4],
+    title: `${M.model === "rademacher" ? "Sₙ/√n" : "(Sₙ − np)/√(np(1−p))"}, n = ${n.toLocaleString("en")}` });
+  const mz = mean(z), vz = variance(z);
+  let m3 = 0, m4 = 0; for (const v of z) { m3 += (v - mz) ** 3; m4 += (v - mz) ** 4; }
+  m3 /= z.length; m4 /= z.length;
+  const skX = M.model === "rademacher" ? 0 : (1 - 2 * M.p) / Math.sqrt(M.s2), kuX = M.model === "rademacher" ? -2 : (1 - 6 * M.s2) / M.s2;
+  let out = 0; for (const v of z) if (Math.abs(v) > 1.96) out++;
+  $("clt-stats").innerHTML = `
+    <div class="stat"><div class="v">${fmt(mz)}</div><div class="l">mean (N(0,1): 0)</div></div>
+    <div class="stat"><div class="v">${fmt(vz)}</div><div class="l">variance (N(0,1): 1)</div></div>
+    <div class="stat"><div class="v">${fmt(m3 / vz ** 1.5)}</div><div class="l">skewness (exact ${fmt(skX / Math.sqrt(n))}, N: 0)</div></div>
+    <div class="stat"><div class="v">${fmt(m4 / vz ** 2 - 3)}</div><div class="l">excess kurtosis (exact ${fmt(kuX / n)}, N: 0)</div></div>
+    <div class="stat"><div class="v">${((out / z.length) * 100).toFixed(1)}%</div><div class="l">|Z| &gt; 1.96 (N: 5%)</div></div>
+    <div class="stat"><div class="v">${fmt(T.ksEmpirical(z), 4)} / ${fmt(T.ksExact(M, n), 4)}</div><div class="l">KS distance: simulated / exact</div></div>`;
+  // KS vs n
+  const nsDense = []; for (let e = 1; e <= 4.0001; e += 0.1) nsDense.push(Math.round(10 ** e));
+  const emp = CHECKPOINTS.map((nn) => [nn, T.ksEmpirical(Array.from(R.S[nn], (s) => (s - nn * M.mu) / (sd * Math.sqrt(nn))))]);
+  const noise = 1.36 / Math.sqrt(R.m);
+  lineChart($("ks-chart"), [
+    { name: "simulated KS distance", color: C[1], pts: emp, dots: true },
+    { name: "exact KS distance (binomial vs normal)", color: C[2], pts: CHECKPOINTS.map((nn) => [nn, T.ksExact(M, nn)]), dots: true },
+    { name: "Berry–Esseen bound 0.4748·ρ/(σ³√n)", color: C[0], pts: nsDense.map((nn) => [nn, T.berryEsseen(M, nn)]), dash: "6 4" },
+    { name: `Monte Carlo noise level 1.36/√m (m = ${R.m})`, color: C[4], pts: [[10, noise], [10000, noise]], dash: "2 3" },
+  ], { xLog: true, yLog: true, xTicks: CHECKPOINTS, yTicks: [0.001, 0.003, 0.01, 0.03, 0.1, 0.3, 1], yMin: 0.001, yMax: 1,
+    xTitle: "n (log scale)", yTitle: "sup |Fₙ(z) − Φ(z)| (log scale)" });
 }
 
-// =============================================================================
+// -----------------------------------------------------------------------------
+// §7 n systems and m attackers
+// -----------------------------------------------------------------------------
+function renderAttackers() {
+  const sd = Math.sqrt(M.s2), m = R.m;
+  const ks = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000].filter((k) => k <= m / 4);
+  const series = [];
+  [100, 1000, 10000].forEach((n, i) => {
+    const a = Array.from(R.S[n], (s) => s / n);
+    const emp = ks.map((k) => { const g = Math.floor(m / k); let tot = 0; for (let j = 0; j < g; j++) { let mx = -Infinity; for (let t = j * k; t < (j + 1) * k; t++) mx = Math.max(mx, a[t]); tot += mx; } return [k, tot / g]; });
+    series.push({ name: `n = ${n.toLocaleString("en")}: simulated`, color: C[i + 1], pts: emp, dots: true, noLine: true });
+    series.push({ name: "", color: C[i + 1], pts: ks.map((k) => [k, M.mu + (sd / Math.sqrt(n)) * T.expectedMaxNormal(k)]), dash: "5 4", width: 1.6 });
+  });
+  series.push({ name: "μ + σ·E[max of m′ normals]/√n (dashed)", color: "var(--muted)", pts: [], dash: "5 4" });
+  const yMax = Math.max(...series.flatMap((s) => s.pts.map(([, y]) => y)));
+  lineChart($("atk-max"), series, { xLog: true, xTicks: ks, yMin: M.mu - 0.02, yMax: yMax * 1.02 + (M.mu === 0 ? 0.02 : 0),
+    yFmt: (v) => v.toFixed(2), xTitle: "number of attackers m′ (log scale)", yTitle: "E[best attacker's Sₙ/n]" });
+
+  const cm = Math.min(m, 200);
+  const c100 = coverage(M.p, 100, cm, 11), c1e4 = coverage(M.p, 10000, cm, 12);
+  const kk = []; for (let k = 1; k <= cm; k = k < 10 ? k + 1 : Math.round(k * 1.25)) kk.push(k);
+  lineChart($("atk-cov"), [
+    { name: "n = 100 systems, simulated", color: C[1], pts: kk.map((k) => [k, c100[k]]), dots: true, noLine: true },
+    { name: "n = 10,000 systems, simulated", color: C[2], pts: kk.map((k) => [k, c1e4[k]]), dots: true, noLine: true },
+    { name: `theory 1 − (1 − p)^m′, p = ${M.p}`, color: C[0], pts: kk.map((k) => [k, 1 - (1 - M.p) ** k]), dash: "5 4" },
+  ], { xLog: true, yMin: 0, yMax: 1, xTicks: [1, 2, 5, 10, 20, 50, 100, 200].filter((k) => k <= cm), yTicks: [0, 0.25, 0.5, 0.75, 1],
+    yFmt: (v) => `${Math.round(v * 100)}%`, xTitle: "number of attackers m′ (log scale)", yTitle: "systems hit by ≥ 1 attacker" });
+
+  const n = 1000, a = Array.from(R.S[n], (s) => s / n);
+  const tot = R.S[n].reduce((x, y) => x + y, 0);
+  const k90 = Math.ceil(Math.log(0.1) / Math.log(1 - M.p));
+  $("atk-stats").innerHTML = `
+    <div class="stat"><div class="v">${fmt(mean(a))} ± ${fmt(2 * Math.sqrt(variance(a) / m))}</div><div class="l">average over the ${m} attackers of Sₙ/n (n = 1000), ±2 SE</div></div>
+    <div class="stat"><div class="v">${tot.toLocaleString("en")}</div><div class="l">aggregate score Σⱼ Sₙ⁽ʲ⁾ (theory m·n·μ = ${(m * n * M.mu).toLocaleString("en")}, sd √(mn)σ = ${fmt(Math.sqrt(m * n) * sd, 1)})</div></div>
+    <div class="stat"><div class="v">${fmt(Math.min(...a))} … ${fmt(Math.max(...a))}</div><div class="l">worst … best single attacker, Sₙ/n</div></div>
+    <div class="stat"><div class="v">${k90}</div><div class="l">attackers needed to hit 90% of systems (1 − (1−p)^m ≥ 0.9)</div></div>`;
+}
+
+// -----------------------------------------------------------------------------
 // Boot
-// =============================================================================
-async function boot() {
-  $("ecc-keygen").onclick = eccKeyGen;
-  $("ecc-encrypt").onclick = eccEncrypt;
-  $("ecc-bits").onchange = eccKeyGen;
-  $("ecc-msg").addEventListener("change", () => { eccEncrypt(); caesarRun(); });
-  $("cz-key").oninput = caesarRun;
-  $("cmp-run").onclick = compareRun;
-  $("ca-run").onclick = attackCaesar;
-  $("ca-method").onchange = attackCaesar;
-  $("ca-input").addEventListener("input", (e) => { e.target.dataset.touched = "1"; });
-  $("exp-run").onclick = experimentRun;
-  $("atk-brute").onclick = () => attackRun("brute");
-  $("atk-bsgs").onclick = () => attackRun("bsgs");
-  $("atk-stop").onclick = () => { stopFlag = true; };
-  $("scale-run").onclick = scalingRun;
-  $("weak-run").onclick = weakRun;
-
-  state.rate = A.addsPerSecond();
-  eccKeyGen();
-  caesarRun();
-  extrapolationTable();
-
-  const [train, test, shak] = await Promise.all(["corpus-train", "corpus-test", "corpus-shakespeare"]
-    .map((f) => fetch(`data/${f}.txt`).then((r) => { if (!r.ok) throw new Error(`cannot load ${f}`); return r.text(); })));
-  state.corpora = { train, test, shakespeare: shak };
-  state.model = X.buildModel(train);
-  renderModel();
-  attackCaesar();
-  lipogramDemo();
-  await experimentRun();
-  await compareRun();
-}
-boot().catch((e) => { console.error(e); document.body.insertAdjacentHTML("afterbegin", `<p class="bad" style="padding:8px 16px">Error: ${esc(e.message)}</p>`); });
+// -----------------------------------------------------------------------------
+$("run").onclick = run;
+$("model").onchange = run;
+$("traj-k").onchange = () => R && renderTrajectories();
+$("lln-eps").onchange = () => R && renderLLN();
+$("clt-n").onchange = () => R && renderCLT();
+run().catch((e) => { console.error(e); $("run-info").innerHTML = `<span class="bad">${e.message}</span>`; });
