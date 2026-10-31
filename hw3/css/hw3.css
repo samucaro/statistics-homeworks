@@ -1,0 +1,50 @@
+/* HW3-specific styles (HW1/HW2 are frozen: shared CSS is not modified) */
+:root {
+  --s1: #b4441f; --s2: #1f5fa8; --s3: #2e7d4f; --s4: #7a4cc2; --s5: #a8761f; --s6: #1f7a8c;
+  --secret: #b4441f; --public: #1f5fa8;
+  --hit: color-mix(in srgb, #2e7d4f 22%, transparent);
+  --miss: color-mix(in srgb, #b4441f 16%, transparent);
+}
+@media (prefers-color-scheme: dark) {
+  :root { --s1: #f08a5d; --s2: #6aa8f0; --s3: #6cc995; --s4: #b393ee; --s5: #e0b45c; --s6: #5fc4d6;
+    --secret: #f08a5d; --public: #6aa8f0;
+    --hit: color-mix(in srgb, #6cc995 25%, transparent); --miss: color-mix(in srgb, #f08a5d 22%, transparent); }
+}
+.hex { font-family: var(--mono); font-size: .8rem; word-break: break-all; }
+.secret { color: var(--secret); }
+.public { color: var(--public); }
+textarea { font: .92rem/1.45 var(--mono); width: 100%; min-height: 70px; padding: 8px 10px; color: var(--text);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
+input[type=text] { width: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: .8rem; color: var(--muted); margin: 4px 0 0 52px; }
+.legend i { display: inline-block; width: 22px; height: 0; vertical-align: middle; margin-right: 6px; }
+
+/* sequence diagram: Bob | channel | Alice */
+.seq { display: grid; grid-template-columns: 1fr minmax(90px, .8fr) 1fr; gap: 8px 10px; align-items: center; margin: 14px 0; }
+.seq .who { font-weight: 700; text-align: center; padding: 6px; border-bottom: 2px solid var(--border); }
+.seq .box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: .88rem; }
+.seq .box b { display: block; margin-bottom: 2px; }
+.seq .chan { text-align: center; font-family: var(--mono); font-size: .85rem; color: var(--muted); }
+.seq .chan .arrow { font-size: 1.3rem; display: block; line-height: 1; }
+.seq .empty { min-height: 1px; }
+@media (max-width: 640px) {
+  .seq { grid-template-columns: 1fr; }
+  .seq .empty, .seq .who.mid { display: none; }
+  .seq .chan .arrow { transform: rotate(90deg); }
+}
+
+.alpha { font-family: var(--mono); font-size: .85rem; border-collapse: collapse; }
+.alpha td { padding: 2px 5px; text-align: center; border: 1px solid var(--border); white-space: nowrap; }
+.big-text { font-family: var(--mono); font-size: 1rem; padding: 8px 12px; background: var(--code-bg); border-radius: 8px; word-break: break-word; margin: 6px 0; }
+.recon { font-family: var(--mono); font-size: .85rem; line-height: 1.7; word-break: break-all; background: var(--code-bg); padding: 10px 12px; border-radius: 8px; max-height: 220px; overflow-y: auto; }
+.recon .h { background: var(--hit); }
+.recon .m { background: var(--miss); }
+td.best { font-weight: 700; color: var(--accent-3); }
+.single-chart { max-width: 680px; }
+.pill { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: .78rem; border: 1px solid var(--border); color: var(--muted); }
+details { margin: 10px 0; }
+details summary { cursor: pointer; color: var(--accent-2); }
+
+/* long values inside tables must wrap (shared CSS sets td to nowrap) */
+td.hex, td.wrap-ok { white-space: normal; }
+#ecc-keys th, #cz-out th { white-space: normal; }
