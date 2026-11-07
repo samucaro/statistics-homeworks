@@ -9,6 +9,7 @@ published with GitHub Pages.
 | 2 | Toy EC-ElGamal on secp256k1 vs Caesar cipher: statistical cryptanalysis and key-space attacks | [`hw2/`](hw2/) |
 | 3 | Penetration scores as random walks (n systems, m attackers): LLN, variance scaling, CLT | [`hw3/`](hw3/) |
 | 4 | Ex. 1: Welford's recurrences (derivation, code, stability). Ex. 2: sampling mean and variance of m hackers × n systems | [`hw4/`](hw4/) |
+| 5 | Ex. 1: Riemann vs Lebesgue numerical integration. Ex. 2: numerical computation of the normal CDF (Liouville, erf) | [`hw5/`](hw5/) |
 
 ## Structure
 

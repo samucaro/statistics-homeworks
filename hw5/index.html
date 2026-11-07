@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HW5 · Integration and Normal CDF</title>
+<meta name="description" content="Ex. 1: Riemann vs Lebesgue numerical integration on regular and pathological functions. Ex. 2: an efficient and accurate numerical method for the standard normal CDF, Liouville's theorem and the error function.">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="css/hw5.css">
+</head>
+<body>
+<div class="wrap">
+
+<header class="site">
+  <div class="crumb"><a href="../">Statistics · Homeworks</a> / HW5</div>
+  <h1>Homework 5 — Riemann vs Lebesgue integration, and the normal CDF</h1>
+  <p class="lead">Statistics · MSc in Cybersecurity, Sapienza University of Rome · A.A. 2026/27</p>
+  <nav class="toc" aria-label="Exercise 1">
+    <b class="toc-part">Ex. 1 — Riemann and Lebesgue integration</b>
+    <a href="#slices">1. Two ways to slice an area</a><a href="#picture">2. Picture</a><a href="#methods">3. Numerical methods</a>
+    <a href="#results">4. Accuracy and convergence</a><a href="#summary">5. All functions</a><a href="#pathological">6. Pathological functions</a><a href="#discussion1">7. Discussion</a>
+  </nav>
+  <nav class="toc" aria-label="Exercise 2">
+    <b class="toc-part">Ex. 2 — Numerical computation of the normal CDF</b>
+    <a href="#phi">8. The normal CDF</a><a href="#liouville">9. Liouville's theorem</a><a href="#erf">10. The error function</a>
+    <a href="#approaches">11. Numerical approaches</a><a href="#evaluation">12. Accuracy and efficiency</a><a href="#discussion2">13. Discussion</a><a href="#refs">References</a>
+  </nav>
+  <p style="font-size:.85rem">
+    Legend: <span class="tag req">required</span> asked by the assignment ·
+    <span class="tag ours">extension</span> my addition
+  </p>
+</header>
+
+<!-- ======================================================================= -->
+<div class="part-banner" id="part1">
+  <span class="part-label">Exercise 1</span>
+  <h2 class="part-title">Riemann and Lebesgue integration</h2>
+  <p class="caption">Numerical integrals by partitioning the domain (Riemann) and by partitioning the range and measuring preimages (Lebesgue).</p>
+</div>
+
+<h2 id="slices">1. Two ways to slice an area</h2>
+<p><b>Why two definitions?</b> Riemann's integral (1854) is built on the domain, and works well for functions that do not jump around too much. Lebesgue's (1902)
+is built on the range: it groups points by <i>value</i>. Lebesgue explained the difference with paying a debt: one can count coins in the order they come out of the
+pocket (Riemann), or first sort them by denomination and count how many there are of each (Lebesgue). The second way only needs to know <i>how much</i> of the domain
+takes each value — a <b>measure</b> — and does not care where those points are.</p>
+<div class="formula-box">
+<span class="lbl">Riemann — partition the domain a = x₀ &lt; x₁ &lt; … &lt; x_N = b, pick tags ξₖ ∈ [xₖ₋₁, xₖ]</span><br>
+∫ₐᵇ f = lim Σₖ f(ξₖ)·(xₖ − xₖ₋₁)   as the mesh → 0, the same limit for every choice of tags<br>
+Darboux:  L(P) = Σ inf f·Δxₖ ≤ ∫ ≤ U(P) = Σ sup f·Δxₖ;   f is Riemann integrable iff inf_P U(P) = sup_P L(P)<br>
+<span class="lbl">Lebesgue — partition the range 0 = t₀ &lt; t₁ &lt; … &lt; t_M, measure the preimages Eⱼ = {x : tⱼ ≤ f(x) &lt; tⱼ₊₁}</span><br>
+∫ f dμ = lim Σⱼ tⱼ·μ(Eⱼ) = ∫₀^∞ μ({x : f(x) &gt; t}) dt     ("layer-cake" formula, for f ≥ 0)
+</div>
+<p><b>How they relate.</b> Two classical theorems answer the question “do they give the same value?”:</p>
+<ul>
+<li>If f is Riemann integrable on [a, b], it is Lebesgue integrable and the two integrals are <b>equal</b>.</li>
+<li><b>Lebesgue's criterion:</b> a bounded f is Riemann integrable if and only if the set of its discontinuities has measure zero. So step functions (one jump)
+and Thomae's function (jumps at every rational, a countable set) are Riemann integrable; Dirichlet's function (discontinuous everywhere) is not.</li>
+<li>For unbounded functions like 1/√x the proper Riemann integral does not exist; the improper Riemann integral (a limit) and the Lebesgue integral both exist and agree,
+because the convergence is absolute.</li>
+</ul>
+
+<h2 id="picture">2. The picture: vertical strips vs horizontal layers</h2>
+<div class="card">
+  <div class="controls">
+    <label>Function<select id="pic-f"></select></label>
+    <label>Strips / layers: <span id="pic-n-v">12</span><input id="pic-n" type="range" min="3" max="60" value="12"></label>
+  </div>
+  <div class="pic-row">
+    <div><div class="chart-title">Riemann: partition of the domain (midpoint sum)</div><div id="pic-riemann"></div></div>
+    <div><div class="chart-title">Lebesgue: partition of the range (layer cake)</div><div id="pic-lebesgue"></div></div>
+  </div>
+  <p class="caption" id="pic-cap"></p>
+</div>
+
+<h2 id="methods">3. Numerical methods compared <span class="tag req">required</span></h2>
+<p>On a computer the Lebesgue idea needs one extra ingredient: the measure μ of each preimage. I implement three ways of getting it, from exact to statistical:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Method</th><th>Family</th><th>What is partitioned</th><th>How the measure is obtained</th><th>Cost per strip / level</th></tr></thead>
+<tbody>
+<tr><td>Left and midpoint Riemann sums</td><td>Riemann</td><td>domain, N strips</td><td class="wrap-ok">—: width Δx is known</td><td>1 evaluation of f</td></tr>
+<tr><td>Darboux lower / upper sums</td><td>Riemann</td><td>domain, N strips</td><td class="wrap-ok">— (exact sup / inf from the monotone pieces)</td><td>2 evaluations</td></tr>
+<tr><td>Lebesgue, exact level sets (lower, upper, midpoint levels)</td><td>Lebesgue</td><td>range, M levels</td><td class="wrap-ok">μ({f &gt; t}) = length of an interval on each monotone piece, endpoint found by bisection</td><td>≈ 62 evaluations per monotone piece</td></tr>
+<tr><td>Lebesgue, counting grid points</td><td>Lebesgue</td><td>range, √K levels</td><td class="wrap-ok">K equally spaced sample points sorted into levels: μ(Eⱼ) ≈ (# points in Eⱼ)·Δx</td><td>1 evaluation per point</td></tr>
+<tr><td>Monte Carlo</td><td>Lebesgue / measure</td><td>nothing</td><td class="wrap-ok">K uniform random points: ∫ f ≈ (b − a)·mean f(Uᵢ), i.e. the measure is estimated statistically</td><td>1 evaluation per point</td></tr>
+</tbody></table></div>
+<p class="caption">The test functions are the seven of the assignment. Each is described by its monotone pieces, which gives exact Darboux sums and exact level sets; the
+pathological functions are treated exactly in §6. Monte Carlo errors are averaged over 20 independent runs.</p>
+
+<h2 id="results">4. Accuracy, convergence and efficiency <span class="tag req">required</span></h2>
+<div class="card">
+  <div class="controls"><label>Function<select id="res-f"></select></label></div>
+  <div id="res-chart" class="single-chart"></div>
+  <p class="caption">Error against <b>cost</b> (evaluations of f), the fair way to compare efficiency. Points with error exactly 0 are not shown on the log scale.</p>
+  <div class="stat-row" id="res-orders"></div>
+  <details><summary>Table of values, errors and evaluations</summary><div class="table-wrap"><table id="res-table"></table></div></details>
+</div>
+
+<h2 id="summary">5. All functions at N = 1,000 <span class="tag req">required</span></h2>
+<div class="table-wrap"><table id="sum-table"></table></div>
+<p class="caption">|error| for N = 1,000 strips / levels / points (Monte Carlo: mean over 20 runs). Bold green = most accurate method for that function.</p>
+
+<h2 id="pathological">6. Pathological functions <span class="tag req">required</span></h2>
+<h3>6.1 Dirichlet's function: the two approaches disagree</h3>
+<p>D(x) = 1 if x is rational, 0 otherwise. Every subinterval, however small, contains both rationals and irrationals, so for <b>every</b> partition
+L(P) = 0 and U(P) = 1: the Darboux sums never meet and D is <b>not Riemann integrable</b>. Concretely, Riemann sums depend on the tags: with the rational tags
+k/N they are all 1, with the irrational tags k/N + 1/(√2·N) they are all 0.</p>
+<p>Lebesgue only needs the measure of the two preimages. {D = 1} = ℚ ∩ [0, 1] is countable, r₁, r₂, …: cover rₖ with an interval of length ε/2ᵏ, and the whole set is
+covered by total length ε, for every ε &gt; 0. So μ(ℚ ∩ [0, 1]) = 0 and</p>
+<div class="formula-box">∫ D dμ = 1·μ(ℚ ∩ [0,1]) + 0·μ([0,1] \ ℚ) = 1·0 + 0·1 = <b>0</b></div>
+<p>Statistically: a uniform random point is irrational with probability 1, so E[D(U)] = 0 and Monte Carlo, in exact arithmetic, returns 0.</p>
+
+<h3>6.2 Thomae's function: the two approaches agree</h3>
+<p>T(p/q) = 1/q in lowest terms, T(x) = 0 for irrational x. It is discontinuous at every rational but continuous at every irrational. The discontinuities form a
+countable set (measure 0), so by Lebesgue's criterion T <b>is</b> Riemann integrable. The lower sums are 0; the upper sum on [k/N, (k+1)/N] uses the fraction with the
+<b>smallest denominator</b> in that interval, which I compute exactly with the Stern–Brocot / continued-fraction algorithm. For Lebesgue, {T ≥ 1/q} is a finite set of
+fractions for every q, so every level set has measure 0 and the integral is 0. Both approaches give 0, as the theorem predicts — but the Riemann sums get there slowly.</p>
+<div class="card">
+  <div class="table-wrap"><table id="path-table"></table></div>
+  <div class="chart-title">Thomae: upper Darboux sums and Riemann sums tend to the integral 0</div>
+  <div id="thomae-chart" class="single-chart"></div>
+</div>
+
+<h3>6.3 The floating-point trap <span class="tag ours">extension</span></h3>
+<p>A computer cannot sample Dirichlet's function: <b>every floating-point number is a rational</b> (an integer divided by a power of 2). A naive program that tests
+“is x rational?” on doubles answers yes for every input, so a Monte Carlo estimate returns 1 instead of 0, and no refinement fixes it. Even √2 and π are stored as rationals:</p>
+<div class="table-wrap"><table id="float-table"></table></div>
+<p>For these functions the computation has to be done by <b>reasoning about the sets</b> (countable ⇒ measure zero; smallest denominators), as above, not by sampling.
+This is why the tables in §6 come from exact rational arithmetic and symbolic tags, not from evaluating floating-point numbers.</p>
+
+<h2 id="discussion1">7. Discussion <span class="tag req">required</span></h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Function</th><th>Riemann</th><th>Lebesgue</th><th>Same value?</th></tr></thead>
+<tbody>
+<tr><td>sin x, x², |x − 0.5|, sin(x)/x</td><td class="wrap-ok">midpoint sums converge with order 2 (error ∝ N⁻²), the cheapest and most accurate</td><td class="wrap-ok">exact level sets converge with order 1.5–2 but cost ≈ 60 evaluations per level</td><td>yes, both → exact value</td></tr>
+<tr><td>Step functions</td><td class="wrap-ok">exact when the jump falls on a grid point, otherwise error ∝ 1/N (one strip is wrong)</td><td class="wrap-ok">exact when a level boundary falls on each value of f (for the 1/3 step: M a multiple of 3), otherwise error ∝ 1/M; no evaluation of f needed, the preimages are known intervals</td><td>yes</td></tr>
+<tr><td>1/√x (unbounded)</td><td class="wrap-ok">no proper integral: left sums and upper Darboux sums are ∞; midpoint sums converge slowly (order ½) to the improper value</td><td class="wrap-ok">exists; with the range cut at T the tail ∫_T^∞ μ(f &gt; t)dt = 1/T is lost: order ½ too</td><td>yes (improper Riemann = Lebesgue)</td></tr>
+<tr><td>Thomae</td><td class="wrap-ok">integrable, but upper sums → 0 slowly</td><td class="wrap-ok">0 immediately: every level set is finite</td><td>yes</td></tr>
+<tr><td>Dirichlet</td><td class="wrap-ok"><b>does not exist</b>: L = 0, U = 1 for every partition; sums depend on the tags</td><td class="wrap-ok"><b>0</b>: the rationals have measure zero</td><td><b>no</b> — only Lebesgue is defined</td></tr>
+</tbody></table></div>
+<ul>
+<li><b>Accuracy and convergence.</b> For smooth functions the Riemann midpoint rule wins: order 2 at one evaluation per strip. The Lebesgue sum with exact level sets also
+converges, but its integrand μ({f &gt; t}) can be less regular than f (for sin x it has an infinite derivative at the maximum, which costs half an order).</li>
+<li><b>Efficiency.</b> Lebesgue sums need the <i>measure</i> of each preimage. In one dimension that means solving f(x) = t (bisection) for every level and every monotone
+piece, ≈ 60 times the cost of a Riemann strip. Without that knowledge, the only way to measure the preimages is to sample the domain — and counting grid points is just a
+Riemann sum with the values rounded to the levels, so it is <i>less</i> accurate (an extra quantisation error ∝ 1/M).</li>
+<li><b>Where Lebesgue's idea pays off numerically: Monte Carlo.</b> Estimating measures with random points gives an error σ/√K that does not depend on smoothness or on the
+dimension of the domain. In one dimension it is far slower than Riemann (order ½), but in high dimension it is the method of choice — a direct use of statistics in numerical
+analysis. For 1/√x it is especially slow because Var(f(U)) = ∫ 1/x − 4 = ∞: the CLT error estimate does not even apply.</li>
+<li><b>Where the two definitions really differ</b> is not numerical but conceptual: Lebesgue's integral exists for functions (Dirichlet) and limits of functions where
+Riemann's breaks down, which is why probability theory is built on it — an expectation E[X] = ∫ X dP is a Lebesgue integral over an abstract sample space that has no
+“intervals” to partition.</li>
+</ul>
+
+<!-- ======================================================================= -->
+<div class="part-banner" id="part2">
+  <span class="part-label">Exercise 2</span>
+  <h2 class="part-title">Numerical computation of the normal CDF</h2>
+  <p class="caption">An efficient and accurate method for Φ, compared with a trusted reference; why Φ has no elementary formula; erf and the numerical approaches.</p>
+</div>
+
+<h2 id="phi">8. The standard normal CDF</h2>
+<p>Following Hogg, McKean &amp; Craig (§3.4), Z ~ N(0, 1) has density φ(z) = e^{−z²/2}/√(2π) and CDF</p>
+<div class="formula-box">Φ(z) = P(Z ≤ z) = ∫_{−∞}^{z} (1/√(2π)) e^{−t²/2} dt,      Φ(−z) = 1 − Φ(z),      X ~ N(μ, σ²) ⇒ P(X ≤ x) = Φ((x − μ)/σ)</div>
+<p>The book gives Φ only as a table (Appendix D, Table II): there is no formula of the familiar kind. The next two sections explain why, and what we do instead.</p>
+
+<h2 id="liouville">9. Why Φ is not an elementary function: Liouville's theorem <span class="tag req">required</span></h2>
+<p><b>Elementary functions</b> are those obtained from rational functions by finitely many arithmetic operations, compositions, exponentials, logarithms and algebraic roots
+(trigonometric functions included, as complex exponentials). Differentiating an elementary function always gives an elementary function; the converse fails, and
+Liouville (1835) found the precise criterion for a large class of integrals:</p>
+<div class="formula-box key"><b>Theorem (Liouville).</b> Let f, g be rational functions, g not constant. Then ∫ f(x)·e^{g(x)} dx is elementary if and only if there is a
+rational function R such that f = R′ + g′·R. In that case ∫ f e^g dx = R·e^g.</div>
+<p>For φ we have f = 1 and g = −x²/2, g′ = −x. An elementary antiderivative would need a rational R with</p>
+<div class="formula-box">R′(x) − x·R(x) = 1</div>
+<ul>
+<li><b>R has no poles.</b> If R had a pole of order k ≥ 1 at some c, then R′ would have a pole of order k + 1 there, while x·R has order at most k: nothing could cancel it,
+so the left side would have a pole, but the right side is the constant 1.</li>
+<li><b>So R is a polynomial</b>, of some degree d. Then x·R has degree d + 1 and R′ degree d − 1, so R′ − xR has degree d + 1 ≥ 1 — it cannot equal the constant 1.
+(R = 0 gives 0 = 1.)</li>
+</ul>
+<p>No such R exists, hence <b>∫ e^{−x²/2} dx is not elementary</b>, and neither is Φ. This is not a lack of cleverness: the theorem proves that no finite combination of
+the usual functions will ever work.</p>
+
+<h2 id="erf">10. The error function: an exact representation that still needs numerics <span class="tag req">required</span></h2>
+<p>When an important integral cannot be expressed with existing functions, mathematics gives it a name and studies it. The <b>error function</b> is</p>
+<div class="formula-box">erf(x) = (2/√π) ∫₀ˣ e^{−t²} dt,     erfc(x) = 1 − erf(x),      <b>Φ(x) = ½·[1 + erf(x/√2)]</b>,      1 − Φ(x) = ½·erfc(x/√2)</div>
+<p>This representation is <b>exact</b>: erf is a fully characterised function — odd, entire (its Taylor series converges everywhere), solution of y″ + 2x·y′ = 0, with known
+asymptotic expansions and continued fractions. Every property of Φ follows from those of erf.</p>
+<p>It does not remove the need for numerical methods, because <b>naming a function is not the same as computing it</b>. To get digits one still needs an algorithm —
+a series, a continued fraction, a rational approximation — with an error bound and a cost. This is not special to erf: exp, sin or log are also computed by libraries
+with polynomial and rational approximations; they only feel “closed form” because the work is hidden in the language. JavaScript, in fact, has no built-in erf
+(Python's math.erf and C's erf exist in the C library), so here every method is implemented from scratch.</p>
+
+<h2 id="approaches">11. Numerical approaches <span class="tag req">required</span></h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Approach</th><th>Formula</th><th>Strength</th><th>Weakness</th></tr></thead>
+<tbody>
+<tr><td>Trapezoidal rule</td><td class="wrap-ok mono">Φ(x) = ½ ± h[½φ(0) + φ(h) + … + ½φ(|x|)]</td><td class="wrap-ok">simple; error ∝ h²</td><td class="wrap-ok">many evaluations for high accuracy; tails by subtraction</td></tr>
+<tr><td>Simpson's rule</td><td class="wrap-ok mono">(h/3)[φ₀ + 4φ₁ + 2φ₂ + … + φₙ]</td><td class="wrap-ok">error ∝ h⁴</td><td>same tail problem</td></tr>
+<tr><td>Taylor series of erf</td><td class="wrap-ok mono">erf z = (2/√π) Σ (−1)ⁿ z^{2n+1}/(n!(2n+1))</td><td class="wrap-ok">converges for every z</td><td class="wrap-ok">alternating terms as large as e^{z²}: catastrophic cancellation for |x| ≳ 4</td></tr>
+<tr><td>Series with positive terms</td><td class="wrap-ok mono">erf z = (2/√π) e^{−z²} Σ 2ⁿ z^{2n+1}/(1·3⋯(2n+1))</td><td class="wrap-ok">no cancellation inside the sum; ≈ 25 terms for |x| &lt; 2</td><td class="wrap-ok">more terms as |x| grows; tails still by subtraction</td></tr>
+<tr><td>Continued fraction (Laplace)</td><td class="wrap-ok mono">1 − Φ(x) = φ(x) / (x + 1/(x + 2/(x + 3/(x + …))))</td><td class="wrap-ok">computes the tail <i>directly</i>; fast for large x</td><td class="wrap-ok">slow for small x (≈ 400 levels at x = 1)</td></tr>
+<tr><td>Abramowitz–Stegun 26.2.17 / 7.1.26</td><td class="wrap-ok mono">φ(x)·(b₁t + … + b₅t⁵),  t = 1/(1 + px)</td><td class="wrap-ok">constant, tiny cost</td><td class="wrap-ok">absolute error ≈ 10⁻⁷; relative error in the tail grows from 0.05% at 4σ to 1–2% at 8–10σ, and 7.1.26 used as ½(1 − erf) collapses to exactly 0 beyond ≈ 8.5σ</td></tr>
+<tr><td><b>My method: hybrid</b></td><td class="wrap-ok">positive series for |x| &lt; 2, continued fraction for |x| ≥ 2</td><td class="wrap-ok">≈ 10⁻¹⁵ relative error everywhere, ≤ 106 terms</td><td class="wrap-ok">variable cost; Φ(x) for large positive x must be read as 1 − Q(x)</td></tr>
+</tbody></table></div>
+
+<h2 id="evaluation">12. Accuracy and efficiency <span class="tag req">required</span></h2>
+<p><b>Reference.</b> Values computed with 40-digit arithmetic in mpmath (Python) and cross-checked with the NIST/SEMATECH e-Handbook table, which gives the area
+from 0 to x to five decimals (all agree): <a href="data/phi-reference.json">phi-reference.json</a>.</p>
+<div class="card">
+  <div class="chart-title">Values at selected points</div>
+  <div class="table-wrap"><table id="pts-table"></table></div>
+</div>
+<div class="card">
+  <div class="chart-title">Relative error of Φ(x) on [−10, 10]</div>
+  <div id="acc-chart"></div>
+  <p class="caption">Relative error, the right measure for probabilities: an absolute error of 10⁻⁷ is harmless at Φ = 0.5 and a 100% error at Φ = 10⁻⁷.
+  Clamped to [10⁻¹⁷, 10] for display.</p>
+</div>
+<div class="grid2">
+  <div class="card"><div class="chart-title">Convergence of the quadrature rules at x = 1.96</div><div id="conv-chart"></div></div>
+  <div class="card"><div class="chart-title">Work needed by the series and the continued fraction</div><div class="table-wrap"><table id="terms-table"></table></div>
+    <div class="chart-title" style="margin-top:12px">Choosing the switch point of the hybrid method</div><div class="table-wrap"><table id="switch-table"></table></div></div>
+</div>
+<div class="card">
+  <div class="controls"><button id="bench-run">Run benchmark again</button></div>
+  <div class="table-wrap"><table id="bench-table"></table></div>
+  <p class="caption">Measured in your browser on 20,000 points in [−6, 6]. Absolute timings depend on the device; the ratios are what matters.</p>
+</div>
+
+<h2 id="discussion2">13. Discussion <span class="tag req">required</span></h2>
+<ul>
+<li><b>Accuracy.</b> The hybrid method stays near the limit of double precision (relative error ≈ 10⁻¹⁵) on the whole line, including Φ(−8) ≈ 6.2·10⁻¹⁶. Simpson with
+n = 100 is excellent near the centre but, like every method that computes a tail as ½ − (something close to ½), it loses all relative accuracy in the lower tail.
+The alternating Taylor series fails outright in the lower tail (x ≲ −6), and for |x| ≳ 8 even Φ itself is wrong: its terms grow to ≈ 10⁶ at |x| = 6 and ≈ 10¹² at |x| = 8 before cancelling to a result of order 1, so the
+rounding error (≈ 10⁻¹⁶ × the largest term) swamps the tail probability.</li>
+<li><b>Convergence.</b> Trapezoid and Simpson show the expected slopes −2 and −4. The series and the continued fraction converge geometrically, but at rates that depend
+on x in opposite ways, which is exactly why combining them works.</li>
+<li><b>Efficiency.</b> Fixed-cost approximations (A&amp;S) are fastest but stop at ≈ 10⁻⁷ absolute error. The hybrid method costs a few times more and is accurate to
+15 digits; the quadrature rules are both slower and less accurate. Production libraries (e.g. W. J. Cody's rational Chebyshev approximations, on which R's pnorm is based)
+reach the same accuracy as the hybrid at fixed cost, by fitting rational functions on a few sub-intervals.</li>
+<li><b>Why tails matter in security.</b> Statistical tests used in security compute p-values in the far tail. The NIST SP 800-22 randomness test suite, for instance,
+computes the p-values of several tests with erfc, and an anomaly detector with a 5σ threshold relies on 1 − Φ(5) ≈ 2.9·10⁻⁷. The fixed A&amp;S formulas give that value
+with ≈ 0.2% relative error — fine — but their relative error grows further out, and computing a tail as ½(1 − erf) collapses to exactly 0 beyond ≈ 8.5σ (A&amp;S 7.1.26
+in the accuracy chart, the formula used in HW3 for KS distances, where it was adequate). A p-value of 0 declares an observation impossible. Tail probabilities must be
+computed directly, with small <i>relative</i> error, as the continued fraction does.</li>
+</ul>
+
+<h2 id="conclusions">Conclusions</h2>
+<ol>
+<li>For Riemann-integrable functions the Riemann and Lebesgue approaches converge to the same value, as the theory guarantees; numerically the Riemann midpoint rule
+is the more accurate and the far cheaper one in one dimension.</li>
+<li>Lebesgue's approach needs the measure of preimages: exact level sets are expensive, grid counting is a disguised Riemann sum, and random sampling (Monte Carlo)
+is the form in which the idea is useful in practice.</li>
+<li>The two definitions really part ways on functions like Dirichlet's: no Riemann integral, Lebesgue integral 0 — a result that only reasoning about measure, not
+floating-point sampling, can reach.</li>
+<li>Φ has no elementary formula (Liouville); erf gives it an exact name, and a numerical algorithm gives it digits. A hybrid of a positive-term series and a tail continued
+fraction reaches double precision everywhere, including the tails that statistical decisions depend on.</li>
+</ol>
+
+<!-- ======================================================================= -->
+<h2 id="refs">References</h2>
+<ul style="font-size:.9rem">
+<li>R. V. Hogg, J. W. McKean, A. T. Craig, <i>Introduction to Mathematical Statistics</i>, §3.4 The Normal Distribution; course notes:
+<a href="https://faculty.etsu.edu/gardnerr/4047/notes-Hogg-McKean-Craig/Hogg-McKean-Craig-3-4.pdf">Hogg-McKean-Craig-3-4.pdf</a>.</li>
+<li>NIST/SEMATECH e-Handbook of Statistical Methods, <a href="https://itl.nist.gov/div898/handbook/eda/section3/eda3671.htm">Cumulative distribution function of the standard normal distribution</a> (table).</li>
+<li>F. Johansson et al., <i>mpmath: a Python library for arbitrary-precision floating-point arithmetic</i>, version 1.4.1 — reference values.</li>
+<li>M. Abramowitz, I. A. Stegun, <i>Handbook of Mathematical Functions</i>, 1964 — 7.1.6, 7.1.26, 26.2.17.</li>
+<li>J. Liouville, <i>Mémoire sur l'intégration d'une classe de fonctions transcendantes</i>, 1835; M. Rosenlicht, <i>Integration in finite terms</i>, American Mathematical Monthly 79, 1972.</li>
+<li>W. J. Cody, <i>Rational Chebyshev approximations for the error function</i>, Mathematics of Computation 23, 1969; <i>Algorithm 715: SPECFUN</i>, ACM TOMS 19, 1993.</li>
+<li>H. Lebesgue, <i>Leçons sur l'intégration et la recherche des fonctions primitives</i>, 1904; W. Rudin, <i>Principles of Mathematical Analysis</i>, 3rd ed., ch. 6 and 11.</li>
+<li>NIST SP 800-22 Rev. 1a, <i>A Statistical Test Suite for Random and Pseudorandom Number Generators for Cryptographic Applications</i>, 2010.</li>
+</ul>
+
+<footer>
+  Source: <a href="js/functions.js">functions.js</a> · <a href="js/integrate.js">integrate.js</a> · <a href="js/rational.js">rational.js</a> ·
+  <a href="js/normal.js">normal.js</a> · <a href="js/app.js">app.js</a> (+ HW3 <a href="../hw3/js/rng.js">rng.js</a>, <a href="../hw3/js/charts4.js">charts4.js</a>). Everything runs in your browser.<br>
+  Developed with the support of an AI assistant (Claude) used as a tutor; design choices, results and interpretations were reviewed and discussed by the author.
+</footer>
+</div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
