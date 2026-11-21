@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HW7 · Convergence and Bayes</title>
+<meta name="description" content="Part 1: modes of convergence (almost sure, in probability, mean square, in distribution), their role in the LLN and CLT, and why √n appears. Part 2: conditional probability, Bayes' theorem, prior, likelihood and posterior, with security examples.">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="css/hw7.css">
+</head>
+<body>
+<div class="wrap">
+
+<header class="site">
+  <div class="crumb"><a href="../">Statistics · Homeworks</a> / HW7</div>
+  <h1>Homework 7 — Modes of convergence, and Bayesian inference</h1>
+  <p class="lead">Statistics · MSc in Cybersecurity, Sapienza University of Rome · A.A. 2026/27</p>
+  <nav class="toc" aria-label="Part 1">
+    <b class="toc-part">Part 1 — Modes of convergence in probability theory</b>
+    <a href="#modes">1. Four meanings of “Xₙ → X”</a><a href="#relations">2. How they relate</a><a href="#sim">3. Simulator</a>
+    <a href="#lln-clt">4. Role in the LLN, CLT and statistics</a><a href="#sqrtn">5. Why √n</a>
+  </nav>
+  <nav class="toc" aria-label="Part 2">
+    <b class="toc-part">Part 2 — Conditional probability, Bayes' theorem and inference</b>
+    <a href="#conditional">6. Conditional probability</a><a href="#bayes">7. Bayes' theorem</a><a href="#ex-ids">8. Example: IDS alerts</a>
+    <a href="#ex-beta">9. Example: phishing click rate</a><a href="#ex-seq">10. Example: learning step by step</a><a href="#pros-cons">11. Advantages and limitations</a>
+    <a href="#conclusions">12. Conclusions</a><a href="#refs">References</a>
+  </nav>
+  <p style="font-size:.85rem">
+    Legend: <span class="tag req">required</span> asked by the assignment ·
+    <span class="tag ours">extension</span> my addition
+  </p>
+</header>
+
+<!-- ======================================================================= -->
+<div class="part-banner" id="part1">
+  <span class="part-label">Part 1</span>
+  <h2 class="part-title">Modes of convergence in probability theory</h2>
+  <p class="caption">What it means for random variables to converge, how the different meanings relate, and where each one is used.</p>
+</div>
+
+<h2 id="modes">1. Four meanings of “Xₙ → X” <span class="tag req">required</span></h2>
+<p><b>Why more than one?</b> A random variable is a function X(ω) of the outcome ω of an experiment. For ordinary numbers “xₙ → x” has one meaning; for
+functions of ω there are several reasonable ones: close for (almost) every ω, close with high probability, close on average, or merely having nearly the same
+distribution. They are genuinely different, and each famous limit theorem uses a specific one.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Mode</th><th>Definition</th><th>What it says</th><th>Intuition</th></tr></thead>
+<tbody>
+<tr><td><b>Almost surely</b> (a.s.)</td><td class="wrap-ok mono">P({ω : Xₙ(ω) → X(ω)}) = 1<br>⇔ for every ε &gt; 0: P(sup_{k≥n} |Xₖ − X| &gt; ε) → 0</td>
+  <td class="wrap-ok">each single path converges (except a set of probability 0)</td><td class="wrap-ok">watching one experiment forever, it ends up and <i>stays</i> near X</td></tr>
+<tr><td><b>In probability</b></td><td class="wrap-ok mono">for every ε &gt; 0: P(|Xₙ − X| &gt; ε) → 0</td>
+  <td class="wrap-ok">at each large n, a large deviation is unlikely</td><td class="wrap-ok">a snapshot at time n is very likely good, but deviations may keep occurring rarely</td></tr>
+<tr><td><b>In mean square</b> (L²)</td><td class="wrap-ok mono">E[(Xₙ − X)²] → 0</td>
+  <td class="wrap-ok">the average squared error vanishes</td><td class="wrap-ok">controls the <i>size</i> of errors, not just their probability: rare huge errors are not allowed</td></tr>
+<tr><td><b>In distribution</b> (in law, weakly)</td><td class="wrap-ok mono">F_{Xₙ}(x) → F_X(x) at every continuity point x of F_X</td>
+  <td class="wrap-ok">the laws converge; the variables need not be close</td><td class="wrap-ok">histograms look alike; Xₙ and X may even live on different sample spaces</td></tr>
+</tbody></table></div>
+
+<h2 id="relations">2. How the modes relate <span class="tag req">required</span></h2>
+<div class="impl" aria-label="Implications between modes of convergence">
+  <div class="mode">almost surely<small>pathwise</small></div><div class="arr">⇒</div>
+  <div class="mode" style="border-color:var(--accent-2)">in probability<small>snapshot at each n</small></div><div class="arr">⇐</div>
+  <div class="mode">mean square L²<small>average size of the error</small></div>
+</div>
+<div class="impl"><div></div><div></div><div class="arr" style="transform:rotate(90deg)">⇒</div><div></div><div></div></div>
+<div class="impl"><div></div><div></div><div class="mode" style="border-color:var(--accent-3)">in distribution<small>only the laws</small></div><div></div><div></div></div>
+<ul>
+<li><b>L² ⇒ probability</b>, by Chebyshev–Markov: P(|Xₙ − X| &gt; ε) ≤ E[(Xₙ − X)²]/ε².</li>
+<li><b>a.s. ⇒ probability</b>: if paths eventually stay within ε, the probability of being outside at time n vanishes.</li>
+<li><b>probability ⇒ distribution</b>: if Xₙ is close to X, its CDF is close to that of X (at continuity points).</li>
+<li><b>No other implication holds in general.</b> The simulator below shows one counterexample for each missing arrow.</li>
+<li><b>Partial converses:</b> convergence in distribution to a <i>constant</i> implies convergence in probability; convergence in probability implies a.s.
+convergence along a subsequence; convergence in probability plus a bound on the variables (uniform integrability) implies convergence in mean.</li>
+</ul>
+
+<h2 id="sim">3. Simulator: which modes hold? <span class="tag ours">extension</span></h2>
+<div class="card">
+  <div class="controls">
+    <label>Sequence<select id="cv-ex"></select></label>
+    <label>ε<select id="cv-eps"><option>0.05</option><option selected>0.1</option><option>0.5</option></select></label>
+    <label>Paths m<select id="cv-m"><option>500</option><option selected>2000</option><option>5000</option></select></label>
+    <label>Show n up to<select id="cv-k"><option>50</option><option selected>200</option><option>2000</option><option>10000</option></select></label>
+    <button id="cv-run" class="primary">Simulate</button>
+  </div>
+  <div class="progress"><div id="cv-progress"></div></div>
+  <div class="chart-title">Sample paths (shaded: X ± ε)</div><div id="cv-paths"></div>
+  <div class="grid2">
+    <div><div class="chart-title">Probabilities and distance of the laws</div><div id="cv-chart"></div></div>
+    <div><div class="chart-title">Mean squared error</div><div id="cv-l2"></div></div>
+  </div>
+  <div class="table-wrap"><table id="cv-verdict"></table></div>
+  <p id="cv-note"></p>
+</div>
+<p class="caption">Almost-sure convergence is checked through its equivalent form P(sup_{k≥n}|Xₖ − X| &gt; ε) → 0, with the supremum over k ≤ 10,000 (a finite
+horizon). The four sequences: a sample mean (all modes), independent Bernoulli(1/n) (not a.s.), a single growing spike n·1{U ≤ 1/n} (not L²), and −Z
+compared with Z (only in distribution). In the first three examples the limit is a constant, and the “in distribution” curve coincides with the
+“in probability” one: for a constant limit the two modes are equivalent (§2).</p>
+
+<h2 id="lln-clt">4. Role in the LLN, the CLT and statistical inference <span class="tag req">required</span></h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Result</th><th>Statement (X₁, X₂, … i.i.d., mean μ, variance σ²)</th><th>Mode</th><th>Conditions</th></tr></thead>
+<tbody>
+<tr><td>L² law</td><td class="mono wrap-ok">E[(X̄ₙ − μ)²] = σ²/n → 0</td><td>mean square</td><td class="wrap-ok">σ² &lt; ∞ (uncorrelated is enough)</td></tr>
+<tr><td>Weak LLN</td><td class="mono wrap-ok">X̄ₙ → μ</td><td>in probability</td><td class="wrap-ok">follows from the L² law via Chebyshev; Khinchin: E|X| &lt; ∞ suffices</td></tr>
+<tr><td>Strong LLN</td><td class="mono wrap-ok">X̄ₙ → μ</td><td>almost surely</td><td class="wrap-ok">Kolmogorov: E|X| &lt; ∞ (necessary and sufficient)</td></tr>
+<tr><td>Glivenko–Cantelli</td><td class="mono wrap-ok">sup_x |F̂ₙ(x) − F(x)| → 0</td><td>almost surely</td><td class="wrap-ok">none: the empirical CDF learns the whole distribution (basis of the KS test of HW3)</td></tr>
+<tr><td><b>CLT</b></td><td class="mono wrap-ok">√n (X̄ₙ − μ)/σ → N(0, 1)</td><td><b>in distribution only</b></td><td class="wrap-ok">σ² &lt; ∞ (Lindeberg–Lévy); Berry–Esseen gives the rate C·ρ/(σ³√n)</td></tr>
+<tr><td>Consistency of estimators</td><td class="mono wrap-ok">θ̂ₙ → θ  (e.g. s² → σ², HW4)</td><td class="wrap-ok">in probability (weak) or a.s. (strong)</td><td class="wrap-ok">usually from a LLN</td></tr>
+<tr><td>Slutsky + continuous mapping</td><td class="mono wrap-ok">√n (X̄ₙ − μ)/s → N(0, 1)</td><td>in distribution</td><td class="wrap-ok">CLT + s → σ in probability: justifies x̄ ± 1.96·s/√n</td></tr>
+<tr><td>Asymptotic normality of the MLE</td><td class="mono wrap-ok">√n (θ̂ₙ − θ) → N(0, I(θ)⁻¹)</td><td>in distribution</td><td class="wrap-ok">regular models (I = Fisher information)</td></tr>
+<tr><td>Pearson χ² (HW6)</td><td class="mono wrap-ok">Σ (O − E)²/E → χ²_{(r−1)(c−1)}</td><td>in distribution</td><td class="wrap-ok">under H₀, large expected counts</td></tr>
+<tr><td>Monte Carlo (HW5)</td><td class="mono wrap-ok">(1/n) Σ f(Uᵢ) → ∫ f</td><td class="wrap-ok">a.s. (SLLN); error ≈ σ_f/√n (CLT)</td><td class="wrap-ok">E|f(U)| &lt; ∞ for the limit, Var f(U) &lt; ∞ for the rate</td></tr>
+</tbody></table></div>
+<p><b>Why the LLN and the CLT use different modes.</b> The LLN is about a <i>number</i> μ: X̄ₙ itself gets close to it, which can be stated for the variables
+(in probability, a.s.). The CLT is about the <i>shape of the fluctuations</i> √n(X̄ₙ − μ), which never settle: the standardised sums at n and 2n have
+correlation 1/√2, so the sequence cannot converge in probability. Only their distribution stabilises, which is all inference needs — a confidence interval is a
+statement about the <i>law</i> of the estimator. The trajectories of HW3 §2 show exactly this: Sₙ/n settles, Sₙ/√n keeps moving with a fixed spread.</p>
+
+<h2 id="sqrtn">5. Why √n: additivity of variance and independence <span class="tag req">required</span></h2>
+<p>For any random variables with finite variance,</p>
+<div class="formula-box">Var(X₁ + … + Xₙ) = Σᵢ Var(Xᵢ) + 2 Σ_{i&lt;j} Cov(Xᵢ, Xⱼ)</div>
+<p>If the variables are <b>uncorrelated</b> — independence is the usual sufficient condition — all covariances vanish and variances simply <b>add</b>:</p>
+<div class="formula-box">Var(Sₙ) = nσ²  ⇒  SD(Sₙ) = σ√n,      Var(X̄ₙ) = σ²/n  ⇒  SD(X̄ₙ) = σ/√n,      SD(√n·(X̄ₙ − μ)) = σ</div>
+<p>Standard deviations do <i>not</i> add: errors with random signs partially cancel. Geometrically, uncorrelated centred variables are <b>orthogonal</b> vectors in
+L², and lengths of orthogonal vectors add like Pythagoras — n unit steps in orthogonal directions end at distance √n, not n. Hence:</p>
+<ul>
+<li><b>Probability:</b> the sum grows like n but fluctuates like √n; √n is the only scaling of Sₙ − nμ with a finite, non-zero limit, the CLT scale.</li>
+<li><b>Statistics:</b> the standard error of a mean is σ/√n, confidence intervals shrink like 1/√n, and halving the uncertainty costs four times the data. Estimators
+whose error is of order 1/√n are called √n-consistent.</li>
+</ul>
+<p><b>When √n fails.</b> The additivity needs the covariances to vanish (or to be summable) and the variance to exist:</p>
+<div class="card">
+  <div class="controls"><label>Paths m<select id="sq-m"><option>500</option><option selected>1000</option><option>3000</option></select></label>
+    <button id="sq-run" class="primary">Simulate</button></div>
+  <div class="progress"><div id="sq-progress"></div></div>
+  <div id="sq-chart" class="single-chart"></div>
+  <p class="caption">Spread of X̄ₙ across paths, measured as IQR/1.349 (equal to the SD for normal data, finite even for Cauchy data). Slope −½ on a log–log scale
+  means 1/√n.</p>
+</div>
+<ul>
+<li><b>Correlation.</b> If every pair has correlation ρ &gt; 0, Var(X̄ₙ) = σ²(1 + (n − 1)ρ)/n → σ²ρ: the spread <b>stops decreasing</b>. The effective sample size is
+n/(1 + (n − 1)ρ) ≤ 1/ρ: with ρ = 0.01, a million observations are worth fewer than 100 independent ones.</li>
+<li><b>Weak dependence</b> (e.g. autocorrelated time series): the rate √n survives but σ² is replaced by the long-run variance σ²(1 + 2Σₖρₖ), usually larger.</li>
+<li><b>No finite variance.</b> For Cauchy data X̄ₙ has the same distribution as a single observation: no √n, and no LLN at all (E|X| = ∞).</li>
+<li><b>In security analytics</b> this is the pseudo-replication trap: 10,000 log events from 10 hosts are not 10,000 independent observations. Events of the same host or
+user are correlated, and treating them as independent produces standard errors and p-values that are far too optimistic (see also HW3 §7.2, shared credentials).</li>
+</ul>
+
+<!-- ======================================================================= -->
+<div class="part-banner" id="part2">
+  <span class="part-label">Part 2</span>
+  <h2 class="part-title">Conditional probability, Bayes' theorem and statistical inference</h2>
+  <p class="caption">How new information updates probabilities, and how Bayesian inference turns this into a method for learning from data.</p>
+</div>
+
+<h2 id="conditional">6. Conditional probability in probability theory and in statistics <span class="tag req">required</span></h2>
+<p><b>In probability theory</b>, conditioning on an event B restricts the universe to B and renormalises:</p>
+<div class="formula-box">
+P(A | B) = P(A ∩ B) / P(B),  P(B) &gt; 0<br>
+multiplication rule:  P(A ∩ B) = P(A | B)·P(B) = P(B | A)·P(A)<br>
+total probability:  P(B) = Σᵢ P(B | Aᵢ)·P(Aᵢ)   for a partition A₁, A₂, …<br>
+independence:  P(A | B) = P(A)  — conditioning on B changes nothing (HW6)
+</div>
+<p><b>In statistics</b>, conditional probabilities are what we estimate and what we condition on. The conditional relative frequencies nᵢⱼ/nᵢ. of HW6 estimate
+P(F = fⱼ | X = xᵢ); a regression model describes the conditional distribution of a response given predictors. Two schools give the same formula two readings:</p>
+<div class="table-wrap"><table>
+<thead><tr><th></th><th>Frequentist</th><th>Bayesian</th></tr></thead>
+<tbody>
+<tr><td>Probability is</td><td class="wrap-ok">long-run relative frequency of repeatable events</td><td class="wrap-ok">a degree of belief, updated by evidence</td></tr>
+<tr><td>The parameter θ is</td><td class="wrap-ok">a fixed unknown constant: no probability distribution</td><td class="wrap-ok">uncertain, so it has a distribution</td></tr>
+<tr><td>Central object</td><td class="wrap-ok">P(data | θ): the likelihood, sampling distributions, p-values</td><td class="wrap-ok">P(θ | data): the posterior</td></tr>
+<tr><td>Typical answer</td><td class="wrap-ok">“if H₀ were true, data this extreme would occur with probability p”</td><td class="wrap-ok">“given the data, θ lies in [a, b] with probability 95%”</td></tr>
+</tbody></table></div>
+<p>Confusing P(A | B) with P(B | A) is the most common error in reasoning with uncertainty (the <i>prosecutor's fallacy</i>). A p-value is P(data at least this extreme | H₀),
+not P(H₀ | data): the p ≈ 10⁻²² of the Berkeley data in HW6 is not the probability that there is no association. Bayes' theorem is the rule that converts one into the other.</p>
+
+<h2 id="bayes">7. Bayes' theorem: prior, likelihood, posterior <span class="tag req">required</span></h2>
+<p>Writing P(A ∩ B) in the two ways of the multiplication rule and dividing by P(B) gives</p>
+<div class="formula-box key">P(θ | data) = P(data | θ) · P(θ) / P(data),     P(data) = Σ_θ P(data | θ)·P(θ)   (or ∫)<br>
+<b>posterior ∝ likelihood × prior</b>        odds form:  posterior odds = prior odds × likelihood ratio (Bayes factor)</div>
+<div class="table-wrap"><table>
+<thead><tr><th>Component</th><th>What it is</th><th>Role</th></tr></thead>
+<tbody>
+<tr><td><b>Prior</b> P(θ)</td><td class="wrap-ok">what is believed about θ before seeing these data: past data, expert knowledge, base rates, or a deliberately vague choice</td><td class="wrap-ok">starting point; matters most when data are few</td></tr>
+<tr><td><b>Likelihood</b> P(data | θ)</td><td class="wrap-ok">the probability of the observed data under each value of θ, read as a <i>function of θ</i> with the data fixed. It is not a distribution over θ and need not integrate to 1</td><td class="wrap-ok">carries the information in the data; shared with frequentist methods (MLE)</td></tr>
+<tr><td><b>Evidence</b> P(data)</td><td class="wrap-ok">the normalising constant, the same for every θ</td><td class="wrap-ok">makes the posterior sum to 1; compares models</td></tr>
+<tr><td><b>Posterior</b> P(θ | data)</td><td class="wrap-ok">the updated distribution of θ</td><td class="wrap-ok">everything else follows from it: estimates, credible intervals, predictions, decisions</td></tr>
+</tbody></table></div>
+<p><b>Why updating is central.</b> Bayes' theorem is a <i>learning rule</i>: data reweight the prior by how well each value of θ explains them. Today's posterior is
+tomorrow's prior, and for independent data, updating one observation at a time gives exactly the same result as using all of them at once. In Bayesian
+inference every conclusion is a summary of the posterior, so the whole method reduces to computing it — analytically with conjugate priors, as below, or numerically
+(Markov chain Monte Carlo) for complex models.</p>
+
+<h2 id="ex-ids">8. Example 1 — Intrusion-detection alerts and the base rate <span class="tag req">required</span></h2>
+<p>An IDS flags malicious events. The <b>prior</b> is the base rate of attacks among events; the <b>likelihoods</b> are the detection rate P(alert | attack) and the
+false-positive rate P(alert | benign). The analyst wants the <b>posterior</b> P(attack | alert).</p>
+<div class="card">
+  <div class="controls">
+    <label>Base rate P(attack)<select id="br-prior"><option value="0.000001">1 in 1,000,000</option><option value="0.00001">1 in 100,000</option>
+      <option value="0.0001" selected>1 in 10,000</option><option value="0.001">1 in 1,000</option><option value="0.01">1%</option><option value="0.1">10%</option></select></label>
+    <label>Detection rate (%)<input id="br-tpr" type="number" min="1" max="100" step="0.5" value="99"></label>
+    <label>False-positive rate (%)<input id="br-fpr" type="number" min="0.001" max="50" step="0.1" value="1"></label>
+    <span class="caption">base rate: <b id="br-prior-v"></b></span>
+  </div>
+  <div class="stat-row" id="br-stats"></div>
+  <div class="grid2">
+    <div><div class="chart-title">The same events as natural frequencies</div><div class="table-wrap"><table id="br-table"></table></div><p id="br-reading"></p></div>
+    <div><div class="chart-title">P(attack | alert) as the base rate changes</div><div id="br-chart"></div></div>
+  </div>
+  <div class="chart-title">Sequential updating with independent detectors (likelihood ratio = <span id="br-lr"></span>)</div>
+  <div class="table-wrap"><table id="br-seq"></table></div>
+</div>
+<p><b>What it shows.</b> With a 99% detection rate and 1% false positives, an alert on an event drawn from a base rate of 1 in 10,000 is an attack less than 1% of the time.
+This is the <b>base-rate fallacy</b>, which Axelsson (2000) identified as the main obstacle of intrusion detection: what limits a detector in practice is its false-positive
+rate relative to the rarity of attacks, not its detection rate. Each additional <i>independent</i> alert multiplies the odds by the likelihood ratio (99 here), which is why
+correlating evidence from different sensors works — as long as the sensors really are independent; two rules that look at the same packet are not.</p>
+
+<h2 id="ex-beta">9. Example 2 — Estimating a phishing click rate <span class="tag req">required</span></h2>
+<p>A phishing simulation is sent to n employees and k click. The unknown parameter p is the probability that an employee clicks. With a <b>Beta(a, b) prior</b> and a
+<b>binomial likelihood</b> L(p) ∝ pᵏ(1 − p)ⁿ⁻ᵏ, the posterior is again a Beta distribution (the Beta is <i>conjugate</i> to the binomial):</p>
+<div class="formula-box">p ~ Beta(a, b),   k | p ~ Binomial(n, p)   ⇒   p | k ~ Beta(a + k, b + n − k)<br>
+posterior mean = (a + k)/(a + b + n) = w · a/(a + b) + (1 − w) · k/n,     w = (a + b)/(a + b + n)</div>
+<p>The prior acts like <b>a + b pseudo-observations</b> (a clicks, b non-clicks) added to the real ones; its weight w shrinks as n grows.</p>
+<div class="card">
+  <div class="controls">
+    <label>Employees n<input id="bb-n" type="number" min="0" value="40"></label>
+    <label>Clicks k<input id="bb-k" type="number" min="0" value="7"></label>
+    <label>Prior<select id="bb-prior"></select></label>
+    <span id="bb-custom" hidden class="controls"><label>a<input id="bb-a" type="number" min="0.01" step="0.5" value="2"></label><label>b<input id="bb-b" type="number" min="0.01" step="0.5" value="8"></label></span>
+    <label>Tolerance (%)<input id="bb-t" type="number" min="1" max="99" value="10"></label>
+  </div>
+  <div class="controls" style="margin-top:6px"><span class="caption">Presets:</span>
+    <button class="preset" data-bb="10,2">small pilot (2/10)</button><button class="preset" data-bb="40,7">one office (7/40)</button>
+    <button class="preset" data-bb="400,47">whole company (47/400)</button><button class="preset" data-bb="30,0">no clicks (0/30)</button></div>
+  <div id="bb-chart" class="single-chart"></div>
+  <div class="stat-row" id="bb-stats"></div>
+  <p class="caption" id="bb-formula"></p>
+</div>
+<p><b>How the prior influences the conclusion — try the presets with different priors:</b></p>
+<ul>
+<li><b>Few data (2/10):</b> the prior dominates. A uniform prior gives a wide posterior; the past-campaigns prior pulls the estimate towards 10%; the badly wrong prior
+gives a nonsensical answer. With little data, the choice of prior <i>is</i> the conclusion, and it must be justified and reported.</li>
+<li><b>Many data (47/400):</b> all reasonable priors give almost the same posterior, close to the frequentist estimate and interval: the data dominate.</li>
+<li><b>No clicks (0/30):</b> the frequentist estimate is 0% — “no risk” — which nobody believes. The posterior stays positive and gives a usable upper bound,
+close to the frequentist “rule of three” (3/n = 10%).</li>
+<li><b>Decision-relevant output:</b> P(p &gt; tolerance | data) answers directly “how likely is it that our click rate is above the 10% we accept?” — a statement a
+frequentist confidence interval cannot make.</li>
+</ul>
+
+<h2 id="ex-seq">10. Example 3 — Learning step by step <span class="tag ours">extension</span></h2>
+<p>Employees are observed one at a time and the posterior is updated after each one. Two analysts start from very different priors.</p>
+<div class="card">
+  <div class="controls">
+    <label>True click rate p (%)<input id="sl-p" type="number" min="1" max="99" value="15"></label>
+    <label>Seed<input id="sl-seed" type="number" value="7"></label>
+  </div>
+  <div id="sl-chart" class="single-chart"></div>
+  <div class="table-wrap"><table id="sl-table"></table></div>
+  <div class="chart-title">Width of the posterior: the √n law again</div>
+  <div id="sl-sd" class="single-chart"></div>
+</div>
+<p>The two analysts disagree strongly at first, but their posteriors <b>merge</b> as data accumulate and both concentrate on the true value. The posterior standard
+deviation shrinks like 1/√n and matches the frequentist standard error √(p(1 − p)/n): this is the Bernstein–von Mises theorem — for large n the posterior is
+approximately normal around the MLE with variance I(θ)⁻¹/n — which links Part 2 back to the convergence results of Part 1.</p>
+
+<h2 id="pros-cons">11. Advantages, limitations and influence on conclusions <span class="tag req">required</span></h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Advantages</th><th>Limitations</th></tr></thead>
+<tbody>
+<tr><td class="wrap-ok">Uses existing knowledge (past incidents, base rates, expert judgement) explicitly</td><td class="wrap-ok">Priors can be subjective; different analysts can reach different conclusions on the same small dataset</td></tr>
+<tr><td class="wrap-ok">Direct probability statements about parameters and hypotheses (“P(p &gt; 10%) = 23%”)</td><td class="wrap-ok">A misspecified or overconfident prior biases the result; a prior that gives probability 0 to a value can never learn it, whatever the data (Cromwell's rule)</td></tr>
+<tr><td class="wrap-ok">Works with small samples and zero counts; regularises extreme estimates</td><td class="wrap-ok">The likelihood is a model too: independence assumptions (e.g. naive Bayes, independent detectors) may be false</td></tr>
+<tr><td class="wrap-ok">Natural sequential updating, ideal for streaming security data</td><td class="wrap-ok">Posteriors of complex models need heavy computation (MCMC) and convergence diagnostics</td></tr>
+<tr><td class="wrap-ok">Decisions follow naturally by minimising expected loss under the posterior</td><td class="wrap-ok">Base rates are often unknown or changing (new attack campaigns), and the posterior inherits that uncertainty</td></tr>
+</tbody></table></div>
+<p><b>Good practice:</b> state the prior and why it was chosen; run a <b>sensitivity analysis</b> with several priors, as in §9; prefer weakly informative priors unless solid
+prior data exist; and check that conclusions are driven by the data once n is large. In security, Bayesian reasoning appears in spam filtering (naive Bayes), alert
+triage and risk scoring, fraud detection and threat-intelligence confidence levels.</p>
+
+<!-- ======================================================================= -->
+<h2 id="conclusions">12. Conclusions</h2>
+<ol>
+<li>The four modes of convergence are different statements: a.s. and L² both imply convergence in probability, which implies convergence in distribution, and nothing
+else holds in general — each missing implication has a simple counterexample.</li>
+<li>The laws of large numbers are statements about the variables (in probability, a.s., L²); the CLT is a statement about distributions only, and that is enough for
+confidence intervals and tests.</li>
+<li>√n comes from the additivity of variance for uncorrelated variables: standard deviations of sums grow like √n. Correlation, dependence or infinite variance break it,
+and treating dependent observations as independent overstates precision.</li>
+<li>Bayes' theorem turns a prior and a likelihood into a posterior; the posterior is the whole of Bayesian inference. The base rate (prior) can dominate the conclusion,
+as with IDS alerts; with enough data the likelihood dominates, and different priors converge.</li>
+</ol>
+
+<!-- ======================================================================= -->
+<h2 id="refs">References</h2>
+<ul style="font-size:.9rem">
+<li>G. Grimmett, D. Stirzaker, <i>Probability and Random Processes</i>, 4th ed., Oxford University Press, 2020 — modes of convergence and counterexamples (ch. 7).</li>
+<li>P. Billingsley, <i>Probability and Measure</i>, 3rd ed., Wiley, 1995 — laws of large numbers, CLT, Borel–Cantelli lemmas.</li>
+<li>A. W. van der Vaart, <i>Asymptotic Statistics</i>, Cambridge University Press, 1998 — consistency, Slutsky, asymptotic normality, Bernstein–von Mises.</li>
+<li>A. Gelman, J. B. Carlin, H. S. Stern, D. B. Dunson, A. Vehtari, D. B. Rubin, <i>Bayesian Data Analysis</i>, 3rd ed., CRC Press, 2013 — priors, conjugacy, sensitivity.</li>
+<li>S. Axelsson, <i>The base-rate fallacy and the difficulty of intrusion detection</i>, ACM Transactions on Information and System Security 3(3), 2000.</li>
+<li>G. Casella, R. L. Berger, <i>Statistical Inference</i>, 2nd ed., Duxbury, 2002 — conditional probability, Bayes' theorem, likelihood.</li>
+</ul>
+
+<footer>
+  Source: <a href="js/convergence.js">convergence.js</a> · <a href="js/bayes.js">bayes.js</a> · <a href="js/app.js">app.js</a>
+  (+ HW3 <a href="../hw3/js/rng.js">rng.js</a>, <a href="../hw3/js/charts4.js">charts4.js</a>). Everything runs in your browser.<br>
+  Developed with the support of an AI assistant (Claude) used as a tutor; design choices, results and interpretations were reviewed and discussed by the author.
+</footer>
+</div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

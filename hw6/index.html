@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HW6 · Contingency and χ²</title>
+<meta name="description" content="Contingency tables built from raw bivariate data: marginal and conditional frequencies, expected counts under independence, Pearson's chi-square test and p-value, independence in probability and statistics, association vs causality.">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="css/hw6.css">
+</head>
+<body>
+<div class="wrap">
+
+<header class="site">
+  <div class="crumb"><a href="../">Statistics · Homeworks</a> / HW6</div>
+  <h1>Homework 6 — Contingency tables, independence and the χ² test</h1>
+  <p class="lead">Statistics · MSc in Cybersecurity, Sapienza University of Rome · A.A. 2026/27</p>
+  <nav class="toc">
+    <a href="#theory">1. Independence: probability vs statistics</a><a href="#formulas">2. From records to the χ² test</a>
+    <a href="#lab">3. Analysis</a><a href="#permutation">4. Permutation test</a><a href="#datasets">5. Reading the datasets</a>
+    <a href="#causality">6. Association is not causality</a><a href="#conclusions">7. Conclusions</a><a href="#refs">References</a>
+  </nav>
+  <p style="font-size:.85rem">
+    Legend: <span class="tag req">required</span> asked by the assignment ·
+    <span class="tag opt">optional</span> optional in the assignment ·
+    <span class="tag ours">extension</span> my addition
+  </p>
+</header>
+
+<!-- ======================================================================= -->
+<h2 id="theory">1. Independence in probability and in statistics <span class="tag req">required</span></h2>
+<h3>1.1 In probability: a property of the model</h3>
+<p>Two events are independent when knowing that one occurred does not change the probability of the other:</p>
+<div class="formula-box">P(A ∩ B) = P(A)·P(B)    ⇔    P(A | B) = P(A)   (when P(B) &gt; 0)</div>
+<p>Two discrete random variables X and F are independent when <b>every</b> pair of their events is, i.e. the joint distribution factorises into the product of
+the marginals:</p>
+<div class="formula-box">pᵢⱼ = P(X = xᵢ, F = fⱼ) = P(X = xᵢ)·P(F = fⱼ) = pᵢ.·p.ⱼ    for all i, j<br>
+equivalently  P(F = fⱼ | X = xᵢ) = P(F = fⱼ)  for all i, j:  every conditional distribution equals the marginal one</div>
+<p>This is an <b>exact</b> statement about probabilities, which are properties of the model, not of data. It is symmetric (X independent of F ⇔ F independent of X)
+and stronger than zero correlation: independent variables are uncorrelated, but uncorrelated variables can be dependent.</p>
+
+<h3>1.2 In statistics: a decision from a sample</h3>
+<p>From data we only see <b>frequencies</b>. Even if X and F are independent in the population, a finite sample never satisfies nᵢⱼ / n = (nᵢ./n)(n.ⱼ/n)
+exactly: random sampling always produces some deviation. Statistical independence is therefore assessed with a <b>hypothesis test</b>:</p>
+<div class="formula-box">H₀: pᵢⱼ = pᵢ.·p.ⱼ for all i, j   (independence)        H₁: pᵢⱼ ≠ pᵢ.·p.ⱼ for at least one cell   (association)</div>
+<p>The question becomes: <i>are the deviations between the observed table and the table expected under independence larger than chance alone would produce?</i>
+Two consequences of this change of viewpoint are essential:</p>
+<ul>
+<li><b>Not rejecting H₀ does not prove independence.</b> It only says that the data give no evidence against it; a small sample can hide a real association.</li>
+<li><b>Rejecting H₀ does not say the association is strong</b> (with a large n, tiny deviations become significant) nor that it is causal (§6). A measure of strength,
+such as Cramér's V, must accompany the p-value.</li>
+</ul>
+
+<!-- ======================================================================= -->
+<h2 id="formulas">2. From records to the χ² test <span class="tag req">required</span></h2>
+<p>The dataset is a list of n records, each with a category of X and a category of F. The program counts, for each pair (xᵢ, fⱼ), how many records fall in it:</p>
+<div class="formula-box">
+<span class="lbl">contingency table and margins</span><br>
+nᵢⱼ = #{records with X = xᵢ and F = fⱼ},   nᵢ. = Σⱼ nᵢⱼ,   n.ⱼ = Σᵢ nᵢⱼ,   n = Σᵢⱼ nᵢⱼ<br>
+<span class="lbl">relative frequencies</span><br>
+joint nᵢⱼ/n,   marginal nᵢ./n and n.ⱼ/n,   conditional f(fⱼ | xᵢ) = nᵢⱼ/nᵢ. and f(xᵢ | fⱼ) = nᵢⱼ/n.ⱼ<br>
+<span class="lbl">expected counts under independence — same margins, joint = product of marginals</span><br>
+Eᵢⱼ = n · (nᵢ./n) · (n.ⱼ/n) = nᵢ. · n.ⱼ / n<br>
+<span class="lbl">Pearson's statistic and its distribution under H₀ (for large n)</span><br>
+χ² = Σᵢ Σⱼ (nᵢⱼ − Eᵢⱼ)² / Eᵢⱼ   ~   χ²<sub>(r−1)(c−1)</sub>,      p-value = P(χ²<sub>df</sub> ≥ χ²<sub>observed</sub>)<br>
+<span class="lbl">strength of association (extension)</span><br>
+Cramér's V = √(χ² / (n · min(r − 1, c − 1)))  ∈ [0, 1]
+</div>
+<p><b>Why (r − 1)(c − 1) degrees of freedom?</b> Once the margins are fixed, filling (r − 1)(c − 1) cells determines the rest of the table; and r − 1 + c − 1
+parameters (the marginal probabilities) are estimated from the data. <b>Validity:</b> the observations must be independent of each other (one record per unit),
+and the χ² approximation needs large expected counts — Cochran's rule: at most 20% of the Eᵢⱼ below 5 and none below 1. The p-value is computed exactly from the
+χ² distribution (regularised incomplete gamma function), in logarithmic form so that extremely small values are still reported.</p>
+
+<!-- ======================================================================= -->
+<h2 id="lab">3. Analysis <span class="tag req">required</span></h2>
+<div class="card">
+  <div class="controls">
+    <label>Dataset (X = rows, F = columns)<select id="ds"></select></label>
+    <label id="opt-dept" hidden>Department<select id="dept"><option>A</option><option>B</option><option>C</option><option>D</option><option>E</option><option>F</option></select></label>
+    <span id="opt-synth" hidden class="controls">
+      <label>n<select id="synth-n"><option>100</option><option selected>1000</option><option>10000</option><option>100000</option></select></label>
+      <label>Seed<input id="synth-seed" type="number" value="2026"></label></span>
+    <label id="opt-rare" hidden style="flex-direction:row;align-items:center;gap:6px"><input id="rare" type="checkbox" checked> group categories under 1% into “other (rare)”</label>
+  </div>
+  <div id="opt-custom" hidden style="margin-top:10px">
+    <label class="caption" for="custom-csv">CSV with a header row (comma or semicolon). Example: a made-up list of incidents.</label>
+    <textarea id="custom-csv" spellcheck="false"></textarea>
+    <div class="controls" style="margin-top:6px"><label>X column<select id="custom-x"></select></label><label>F column<select id="custom-f"></select></label>
+      <button id="custom-run" class="primary">Analyse</button></div>
+  </div>
+</div>
+<div id="analysis">
+  <h3>3.1 The raw data</h3>
+  <div id="raw"></div>
+  <h3>3.2 Contingency table, joint and marginal frequencies</h3>
+  <div class="tables-grid" id="tables-1"></div>
+  <h3>3.3 Conditional frequencies</h3>
+  <div class="tables-grid" id="tables-2"></div>
+  <div class="chart-title">Conditional distribution of F for each category of X, and the marginal distribution of F</div>
+  <div id="bars" class="single-chart"></div>
+  <p class="caption">Under independence all bars would look like the last one. Visible differences between bars are association; the χ² test says whether
+  they are larger than sampling noise.</p>
+  <h3>3.4 Expected counts and residuals</h3>
+  <div class="tables-grid" id="tables-3"></div>
+  <h3>3.5 χ² statistic, p-value and decision</h3>
+  <div class="stat-row" id="stats"></div>
+  <div id="decision" class="decision"></div>
+  <div id="decision-warn"></div>
+</div>
+
+<!-- ======================================================================= -->
+<h2 id="permutation">4. What the p-value means: a permutation test <span class="tag opt">optional</span> <span class="tag ours">extension</span></h2>
+<p>Under H₀ the pairing between X and F is arbitrary. Shuffling the F labels among the records — keeping every row and column total fixed — produces tables
+that independence could have generated. Repeating this B times gives the <b>null distribution</b> of χ² by simulation; the fraction of shuffled tables with a χ² at
+least as large as the observed one is a p-value that needs no large-sample approximation. It also shows that the χ²<sub>df</sub> curve describes the statistic well
+when expected counts are large.</p>
+<div class="card">
+  <div class="controls">
+    <label>Permutations B<select id="perm-b"><option>500</option><option selected>2000</option><option>10000</option></select></label>
+    <button id="perm-run" class="primary">Run on the current table</button>
+  </div>
+  <div class="progress"><div id="perm-progress"></div></div>
+  <div id="perm-chart" class="single-chart"></div>
+  <div id="perm-out"></div>
+</div>
+
+<!-- ======================================================================= -->
+<h2 id="datasets">5. Reading the datasets <span class="tag req">required</span></h2>
+<h3>5.1 NSL-KDD: network connections and attacks</h3>
+<p>NSL-KDD is a classic benchmark for intrusion detection: each record is a network connection described by 41 features and labelled as normal traffic or as one
+of 22 attack types, grouped in four categories (DoS, Probe, R2L, U2R). I use the 25,192 connections of <i>KDDTrain+_20Percent</i>.</p>
+<ul>
+<li><b>Protocol × label:</b> a very strong association (χ² ≈ 2,036 with 2 df, p ≈ 10<sup>−442</sup>). ICMP connections are mostly attacks (smurf floods and
+ipsweep scans use ICMP), UDP connections mostly normal. Look at the residuals: the largest contributions come from ICMP and UDP, even though TCP has most records.</li>
+<li><b>Flag × category:</b> the connection-state flag S0 (“connection attempt seen, no reply”) is concentrated in DoS traffic: it is the signature of the
+SYN-flood attack <i>neptune</i>, which leaves half-open connections. Without grouping, many cells have tiny expected counts (rare flags, rare U2R attacks), and the
+page flags the approximation as unreliable: grouping or the permutation test is needed.</li>
+</ul>
+<h3>5.2 Berkeley 1973: the same data, opposite conclusions</h3>
+<p>Graduate admissions at UC Berkeley in 1973 (6 largest departments, 4,526 applications) are the textbook example of Simpson's paradox, studied by Bickel,
+Hammel and O'Connell (1975):</p>
+<div class="table-wrap"><table id="simpson"></table></div>
+<p>Aggregated, the association between gender and admission is highly significant: men were admitted at 45%, women at 30%. Within each department there is no
+significant difference, except department A, where <i>women</i> were admitted more often. The explanation is a third variable: women applied mostly to the
+departments with low admission rates (C–F), men mostly to those with high rates (A, B). The aggregated table mixes the effect of the department with that of gender.</p>
+<h3>5.3 Synthetic data: what independence looks like</h3>
+<p>Here X and F are generated independently by construction, so H₀ is true. With any n the test usually does not reject, and with α = 0.05 it rejects in about 5%
+of the seeds — the type I error rate the test promises. Change the seed to see it.</p>
+
+<!-- ======================================================================= -->
+<h2 id="causality">6. Statistical association is not causality <span class="tag req">required</span></h2>
+<p>The χ² test answers one question: <i>are X and F statistically associated in the population that produced the data?</i> It says nothing about <b>why</b>.
+A significant association can have several explanations other than “X causes F”:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Explanation</th><th>Mechanism</th><th>Example</th></tr></thead>
+<tbody>
+<tr><td>Confounding</td><td class="wrap-ok">a third variable Z influences both X and F</td><td class="wrap-ok">Berkeley: the department influences both who applies and who is admitted</td></tr>
+<tr><td>Reverse causation</td><td class="wrap-ok">F causes X, not the other way round</td><td class="wrap-ok">hosts with more security tools installed show more alerts — because they were compromised before and then hardened</td></tr>
+<tr><td>Selection bias</td><td class="wrap-ok">the way records were collected creates the association</td><td class="wrap-ok">NSL-KDD: records were resampled by difficulty, so its class proportions do not reflect real traffic</td></tr>
+<tr><td>Chance</td><td class="wrap-ok">with many tests, some are significant by luck (5% at α = 0.05)</td><td class="wrap-ok">testing every pair of log fields: false associations are guaranteed</td></tr>
+<tr><td>Causation</td><td class="wrap-ok">X actually influences F</td><td class="wrap-ok">S0 flags in DoS traffic: the SYN flood <i>produces</i> half-open connections — known from the TCP protocol, not from the χ² test</td></tr>
+</tbody></table></div>
+<p>Establishing causation needs more than a contingency table: a <b>randomised experiment</b> (randomisation breaks every link with confounders), or explicit causal
+assumptions about the variables (e.g. conditioning on the right confounders, as the per-department analysis does), together with knowledge of the mechanism.
+Conversely, a <b>missing</b> association in the aggregate can hide real effects that cancel out across subgroups.</p>
+<p><b>Why it matters in security.</b> Detection models learn associations. A classifier trained on NSL-KDD learns that “ICMP means attack” — true in this dataset,
+false in a real network where ICMP is mostly harmless and attacks use other protocols. Security metrics have the same trap: “departments that completed the
+awareness training reported more phishing” may mean the training worked (more reporting), or that the most targeted departments were trained first. Decisions
+based on association alone can be wrong in either direction.</p>
+
+<!-- ======================================================================= -->
+<h2 id="conclusions">7. Conclusions</h2>
+<ol>
+<li>The contingency table, marginal and conditional frequencies, expected counts and χ² are all computed from the raw records; the results match a reference
+implementation (SciPy) to all printed digits.</li>
+<li>In probability, independence is an exact factorisation pᵢⱼ = pᵢ.p.ⱼ; in statistics it is a hypothesis tested on frequencies, which can be rejected but never proven.</li>
+<li>Both NSL-KDD tables show very strong, highly significant associations between connection features and attacks; the synthetic data, independent by construction,
+do not.</li>
+<li>Berkeley shows that a significant association in aggregated data can disappear — or reverse — when a confounder is taken into account: the χ² test detects
+association, and only design and domain knowledge can turn it into a causal claim.</li>
+</ol>
+
+<!-- ======================================================================= -->
+<h2 id="refs">References</h2>
+<ul style="font-size:.9rem">
+<li>K. Pearson, <i>On the criterion that a given system of deviations from the probable…</i>, Philosophical Magazine 50, 1900.</li>
+<li>A. Agresti, <i>Categorical Data Analysis</i>, 3rd ed., Wiley, 2013 — χ² test, residuals, Cramér's V.</li>
+<li>W. G. Cochran, <i>Some methods for strengthening the common χ² tests</i>, Biometrics 10, 1954 — expected-count rule.</li>
+<li>P. J. Bickel, E. A. Hammel, J. W. O'Connell, <i>Sex bias in graduate admissions: data from Berkeley</i>, Science 187, 1975.
+Data: R dataset <i>UCBAdmissions</i>, via the <a href="https://github.com/vincentarelbundock/Rdatasets">Rdatasets</a> collection.</li>
+<li>M. Tavallaee, E. Bagheri, W. Lu, A. A. Ghorbani, <i>A detailed analysis of the KDD CUP 99 data set</i>, IEEE CISDA 2009 — the NSL-KDD dataset
+(file KDDTrain+_20Percent via <a href="https://github.com/defcom17/NSL_KDD">github.com/defcom17/NSL_KDD</a>).</li>
+<li>J. Pearl, M. Glymour, N. P. Jewell, <i>Causal Inference in Statistics: A Primer</i>, Wiley, 2016 — confounding and Simpson's paradox.</li>
+</ul>
+
+<footer>
+  Data: <a href="data/nsl-kdd-train20.csv">nsl-kdd-train20.csv</a> (protocol, flag, label, category) · <a href="data/ucb-admissions-1973.csv">ucb-admissions-1973.csv</a> (one row per application).<br>
+  Source: <a href="js/contingency.js">contingency.js</a> · <a href="js/app.js">app.js</a> (+ HW3 <a href="../hw3/js/rng.js">rng.js</a>, <a href="../hw3/js/charts4.js">charts4.js</a>). Everything runs in your browser.<br>
+  Developed with the support of an AI assistant (Claude) used as a tutor; design choices, results and interpretations were reviewed and discussed by the author.
+</footer>
+</div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
